@@ -917,8 +917,13 @@ def _extract_code_from_zip(zip_file) -> str:
 
 def _render_code_preview(code: str):
     """渲染代码统计信息 + Token/费用预估。"""
-    parser = CodeParser()
-    info = parser.analyze(code)
+    # 使用 session_state 缓存解析结果，避免每次 re-run 重复执行 tree-sitter AST 分析
+    _code_hash = hash(code)
+    if st.session_state.get("_parser_cache_hash") != _code_hash:
+        parser = CodeParser()
+        st.session_state._parser_cache_info = parser.analyze(code)
+        st.session_state._parser_cache_hash = _code_hash
+    info = st.session_state._parser_cache_info
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     with c1: st.metric("代码行数", f"{info['lines']:,}")
     with c2: st.metric("函数数量", info["functions"])
@@ -1150,9 +1155,9 @@ def _render_agent_result(agent_type: str, config: dict):
     st.markdown("## 📄 生成结果")
     st.markdown(content)
 
-    # #8 质量校验报告
+    # #8 质量校验报告（使用缓存，避免每次 re-run 重复校验）
     template = st.session_state.agent_templates.get(agent_type)
-    validation = validate_document(agent_type, content, custom_template=template)
+    validation = _get_cached_validation(agent_type, content)
     with st.expander(f"🔍 质量校验报告 ({validation.summary()})", expanded=False):
         for result in validation.results:
             icon = {"error": "❌", "warning": "⚠️", "info": "️"}.get(result.severity, "ℹ️")
@@ -1244,6 +1249,20 @@ def render_footer():
         "仅供功能安全分析参考。所有分析结论和建议措施须由具备资质的功能安全工程师进行人工审查和确认。"
         "</p>", unsafe_allow_html=True,
     )
+
+
+# ======================================================================
+# 缓存校验（避免每次 re-run 重复执行 validate_document）
+# ======================================================================
+
+def _get_cached_validation(agent_type: str, content: str):
+    """获取校验报告，使用 session_state 缓存避免重复计算。"""
+    if "_validation_cache" not in st.session_state:
+        st.session_state._validation_cache = {}
+    cache_key = (agent_type, hash(content))
+    if cache_key not in st.session_state._validation_cache:
+        st.session_state._validation_cache[cache_key] = validate_document(agent_type, content)
+    return st.session_state._validation_cache[cache_key]
 
 
 # ======================================================================
