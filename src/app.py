@@ -484,7 +484,7 @@ def _render_dashboard(config: dict):
             st.markdown(f"""
             <div style="background: {meta['color']}; border-radius: 12px; padding: 20px;
                         color: white; display: flex; flex-direction: column;
-                        height: 260px; box-shadow: 0 2px 10px rgba(0,0,0,0.25);">
+                        height: 240px; box-shadow: 0 2px 10px rgba(0,0,0,0.25);">
                 <div style="text-align: center;">
                     <div style="font-size: 2.5rem; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3));">{meta['icon']}</div>
                     <h3 style="margin: 6px 0 2px 0; font-size: 1.1rem; line-height: 1.3;
@@ -494,17 +494,20 @@ def _render_dashboard(config: dict):
                 </div>
                 <p style="font-size: 0.75rem; color: rgba(255,255,255,0.92); flex-grow: 1;
                           margin: 8px 0; line-height: 1.4;">{meta['desc']}</p>
-                <div style="text-align: center;">
-                    <div style="font-size: 0.7rem;
-                                padding: 3px 10px; border-radius: 10px; display: inline-block;
-                                background: {'rgba(255,255,255,0.4)' if done else 'rgba(255,255,255,0.12)'};
-                                color: {'#1a1a2e' if done else 'rgba(255,255,255,0.95)'};
-                                font-weight: {'600' if done else 'normal'};">
-                        {'✅ 已生成' if done else '⏳ 未生成'}
-                    </div>
-                </div>
             </div>
             """, unsafe_allow_html=True)
+
+            # 状态标签（卡片与按钮之间）
+            if done:
+                st.markdown('<div style="text-align: center; margin: 6px 0 2px 0;">'
+                            '<span style="font-size: 0.72rem; padding: 3px 10px; border-radius: 10px;'
+                            ' background: rgba(76,175,80,0.25); color: #66bb6a; font-weight: 600;">'
+                            '✅ 已生成</span></div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div style="text-align: center; margin: 6px 0 2px 0;">'
+                            '<span style="font-size: 0.72rem; padding: 3px 10px; border-radius: 10px;'
+                            ' background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.45);">'
+                            '⏳ 未生成</span></div>', unsafe_allow_html=True)
 
             btn_label = "📂 打开" if not done else "📂 查看 / 重新生成"
             if st.button(btn_label, key=f"dash_{agent_type}", use_container_width=True):
