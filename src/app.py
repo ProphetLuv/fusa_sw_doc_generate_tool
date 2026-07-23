@@ -81,22 +81,22 @@ st.markdown("""
 _AGENT_META = {
     "SRS":  {"icon": "📋", "name": "SRS Agent", "full": "软件需求规格说明",
              "desc": "从代码提取功能需求、接口需求、安全需求，生成完整的 SRS 文档",
-             "color": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)"},
+             "color": "linear-gradient(135deg, #3a4a6b 0%, #4a4068 100%)"},
     "SAD":  {"icon": "🏗️", "name": "SAD Agent", "full": "软件架构设计",
              "desc": "分析模块分解、组件接口、数据流、中断调度，生成架构设计文档",
-             "color": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)"},
+             "color": "linear-gradient(135deg, #6b4a58 0%, #5a3d50 100%)"},
     "FMEA": {"icon": "⚠️", "name": "FMEA Agent", "full": "失效模式与影响分析",
              "desc": "识别失效模式、评估 RPN、制定缓解措施（自动注入 SRS + SAD 上下文）",
-             "color": "linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)"},
+             "color": "linear-gradient(135deg, #3d5a6b 0%, #3a5260 100%)"},
     "SDD":  {"icon": "📐", "name": "SDD Agent", "full": "软件详细设计",
              "desc": "深入分析函数级设计、数据结构、算法逻辑，生成详细设计文档",
-             "color": "linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)"},
+             "color": "linear-gradient(135deg, #3d6b5a 0%, #3a5a50 100%)"},
     "TC-UNIT":   {"icon": "🧪", "name": "TC-UNIT Agent",  "full": "单元测试用例",
              "desc": "针对每个函数设计单元测试，含 Unity/GTest 代码、覆盖矩阵和通过准则",
-             "color": "linear-gradient(135deg, #fa709a 0%, #fee140 100%)"},
+             "color": "linear-gradient(135deg, #6b5a4a 0%, #5a4a3d 100%)"},
     "TC-INTEGRATION": {"icon": "🔗", "name": "TC-INTEG Agent", "full": "集成测试用例",
              "desc": "验证模块间接口、数据流、控制流、时序与故障注入的集成测试",
-             "color": "linear-gradient(135deg, #f7971e 0%, #ffd200 100%)"},
+             "color": "linear-gradient(135deg, #5a5a3d 0%, #4a4a35 100%)"},
 }
 
 # ======================================================================
