@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-四种功能安全文档类型的专业 Prompt 模板
+五种功能安全文档类型的专业 Prompt 模板
 - SRS  : 软件需求规格说明（Software Requirements Specification）
+- SAD  : 软件架构设计（Software Architecture Design）
 - FMEA : 失效模式与影响分析（Failure Mode and Effects Analysis）
 - SDD  : 软件详细设计（Software Detailed Design）
 - TC   : 测试用例（Test Cases）
