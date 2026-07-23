@@ -1,4 +1,5 @@
 @echo off
+setlocal enabledelayedexpansion
 chcp 65001 >nul
 title 功能安全文档生成器
 color 0A
@@ -25,6 +26,30 @@ if %errorlevel%==0 (
     goto find_port
 )
 
+:: 自动检测虚拟环境（遍历当前目录下所有包含 Scripts\python.exe 的文件夹）
+set "PYTHON="
+set "VENV_NAME="
+for /d %%D in ("%~dp0*") do (
+    if exist "%%D\Scripts\python.exe" (
+        if "!PYTHON!"=="" (
+            set "PYTHON=%%D\Scripts\python.exe"
+            set "VENV_NAME=%%~nxD"
+        )
+    )
+)
+
+if "!PYTHON!"=="" (
+    echo  [错误] 未检测到 Python 虚拟环境。
+    echo  请在程序目录下创建虚拟环境，例如：
+    echo.
+    echo      python -m venv .venv
+    echo.
+    pause
+    exit /b 1
+)
+
+echo  [信息] 检测到虚拟环境: !VENV_NAME!
+
 echo  正在启动服务（端口: %PORT%）...
 echo  启动后请在浏览器中访问:
 echo.
@@ -35,6 +60,6 @@ echo  ============================================
 echo.
 
 cd /d "%~dp0"
-"%~dp0.venv\Scripts\streamlit.exe" run src\app.py --server.headless true --browser.gatherUsageStats false --server.port %PORT%
+"!PYTHON!" -m streamlit run src\app.py --server.headless true --browser.gatherUsageStats false --server.port %PORT%
 
 pause
