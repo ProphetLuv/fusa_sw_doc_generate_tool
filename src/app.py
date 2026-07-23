@@ -40,7 +40,7 @@ st.markdown("""
         text-align: center; margin-bottom: 0.5rem;
     }
     .sub-title {
-        font-size: 1rem; color: inherit; opacity: 0.6; text-align: center; margin-bottom: 2rem;
+        font-size: 1rem; color: inherit; opacity: 0.75; text-align: center; margin-bottom: 2rem;
     }
     .metric-card {
         background: #f8f9fa; border-radius: 8px; padding: 12px 16px;
@@ -53,11 +53,11 @@ st.markdown("""
     }
     .agent-card:hover { transform: translateY(-4px); box-shadow: 0 8px 25px rgba(0,0,0,0.15); }
     .agent-card h3 { margin: 8px 0 4px 0; font-size: 1.3rem; text-align: center; }
-    .agent-card p { font-size: 0.85rem; opacity: 0.9; margin: 4px 0; }
+    .agent-card p { font-size: 0.85rem; opacity: 0.95; margin: 4px 0; }
     .agent-card .status { font-size: 0.75rem; margin-top: 12px; padding: 4px 10px;
         border-radius: 12px; display: inline-block; }
-    .status-done { background: rgba(255,255,255,0.25); }
-    .status-pending { background: rgba(255,255,255,0.1); }
+    .status-done { background: rgba(255,255,255,0.4); color: #1a1a2e; font-weight: 600; }
+    .status-pending { background: rgba(255,255,255,0.18); color: rgba(255,255,255,0.95); }
     .disclaimer-box {
         background: #fff3cd; border: 1px solid #ffc107; border-radius: 6px;
         padding: 12px; margin-top: 16px; font-size: 0.85rem; color: #856404;
@@ -69,6 +69,8 @@ st.markdown("""
         .metric-card { background: #1e1e2e; border-left-color: #5b8def; }
         .disclaimer-box { background: #3b2e00; border-color: #b8860b; color: #f0d060; }
     }
+    /* Streamlit 暗色主题下 info/warning 提示框文字可读性增强 */
+    [data-testid="stAlert"] p { color: inherit; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -494,17 +496,22 @@ def _render_dashboard(config: dict):
             st.markdown(f"""
             <div style="background: {meta['color']}; border-radius: 12px; padding: 20px;
                         color: white; display: flex; flex-direction: column;
-                        height: 260px;">
+                        height: 260px; box-shadow: 0 2px 10px rgba(0,0,0,0.25);">
                 <div style="text-align: center;">
-                    <div style="font-size: 2.5rem;">{meta['icon']}</div>
-                    <h3 style="margin: 6px 0 2px 0; font-size: 1.1rem; line-height: 1.3;">{meta['name']}</h3>
-                    <p style="font-size: 0.8rem; opacity: 0.85; margin: 2px 0;">{meta['full']}</p>
+                    <div style="font-size: 2.5rem; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3));">{meta['icon']}</div>
+                    <h3 style="margin: 6px 0 2px 0; font-size: 1.1rem; line-height: 1.3;
+                               color: #ffffff; text-shadow: 0 1px 3px rgba(0,0,0,0.4);">{meta['name']}</h3>
+                    <p style="font-size: 0.8rem; opacity: 1; margin: 2px 0;
+                              color: rgba(255,255,255,0.95);">{meta['full']}</p>
                 </div>
-                <p style="font-size: 0.75rem; opacity: 0.75; flex-grow: 1; margin: 8px 0; line-height: 1.4;">{meta['desc']}</p>
+                <p style="font-size: 0.75rem; color: rgba(255,255,255,0.92); flex-grow: 1;
+                          margin: 8px 0; line-height: 1.4;">{meta['desc']}</p>
                 <div style="text-align: center;">
                     <div style="font-size: 0.7rem;
                                 padding: 3px 10px; border-radius: 10px; display: inline-block;
-                                background: {'rgba(255,255,255,0.3)' if done else 'rgba(255,255,255,0.1)'};">
+                                background: {'rgba(255,255,255,0.4)' if done else 'rgba(0,0,0,0.25)'};
+                                color: {'#1a1a2e' if done else 'rgba(255,255,255,0.95)'};
+                                font-weight: {'600' if done else 'normal'};">
                         {'✅ 已生成' if done else '⏳ 未生成'}
                     </div>
                 </div>
