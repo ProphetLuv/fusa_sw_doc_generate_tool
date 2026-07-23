@@ -240,7 +240,7 @@ def _render_json_mode(template: str):
     st.sidebar.text(f"供应商:   {provider}")
     st.sidebar.text(f"模型:     {cfg.get('model', DEFAULT_MODELS.get(provider, 'gpt-4o'))}")
     st.sidebar.text(f"Base URL: {cfg.get('api_base', '默认')}")
-    st.sidebar.text(f"Max Tokens: {cfg.get('max_tokens', 8192)}")
+    st.sidebar.text(f"生成长度: {cfg.get('max_tokens', 8192)}")
     st.sidebar.text(f"Temperature: {cfg.get('temperature', 0.2)}")
     st.sidebar.text(f"模块名称: {cfg.get('module_name', '目标模块')}")
     st.sidebar.text(f"ASIL:     {cfg.get('asil_level', 'ASIL B')}")
@@ -381,7 +381,7 @@ def _render_manual_mode():
         help="输出随机性。0=完全确定，0.2=推荐值，0.5+=创造性增强（需求文档不建议）。"
     )
     st.sidebar.caption(f"💡 {temp_hint}")
-    st.sidebar.info("💡 Max Tokens 随 ASIL 等级自动设定（当前: {}）。各 Agent 可在「生成选项」中单独微调。".format(max_tokens))
+    st.sidebar.caption(f"💡 单次生成文档长度随 ASIL 等级自动调整（当前上限约 {max_tokens} 字）。如需微调，可展开各 Agent 的「生成选项」。")
 
     # 合并主 Key + 额外 Key 池
     all_keys = [api_key] + extra_keys if api_key else extra_keys
@@ -734,11 +734,11 @@ def _render_agent_workspace(agent_type: str, config: dict):
                                        key=f"review_{agent_type}")
         with opt_col3:
             agent_max_tokens = st.number_input(
-                "📏 Max Tokens", min_value=1024, max_value=65536,
+                "📏 单次生成长度", min_value=1024, max_value=65536,
                 value=_AGENT_TOKEN_DEFAULT.get(agent_type, 8192),
                 step=1024,
-                help=f"当前 Agent 单次生成最大 token 数（{_asil_level} 推荐值: {_AGENT_TOKEN_DEFAULT.get(agent_type, 8192)}）。"
-                     f"文档被截断时请增大此值。",
+                help=f"当前 Agent 单次生成文档的最大长度（{_asil_level} 推荐值: {_AGENT_TOKEN_DEFAULT.get(agent_type, 8192)}）。"
+                     f"若生成的文档被截断不完整，请增大此值。",
                 key=f"max_tokens_{agent_type}",
             )
 
