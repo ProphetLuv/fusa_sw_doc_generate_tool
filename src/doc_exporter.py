@@ -7,7 +7,8 @@ Markdown → Word / Excel 导出器
 
 import io
 import re
-from typing import List, Tuple, Optional
+import time
+from typing import List, Tuple, Optional, Dict
 
 from docx import Document
 from docx.shared import Pt, RGBColor, Cm, Inches
@@ -23,13 +24,15 @@ from openpyxl.utils import get_column_letter
 # Word 导出
 # ======================================================================
 
-def export_to_word(title: str, markdown: str) -> bytes:
+def export_to_word(title: str, markdown: str, metadata: Optional[Dict[str, str]] = None) -> bytes:
     """
     将 Markdown 内容导出为 Word (.docx) 文件，返回文件字节流。
 
     Args:
         title:    文档标题
         markdown: Markdown 格式文本
+        metadata: 可选文档元数据，支持键：doc_id, version, module_name, asil_level,
+                  author, reviewer, approver, date, confidentiality
 
     Returns:
         .docx 文件的字节内容
@@ -39,9 +42,13 @@ def export_to_word(title: str, markdown: str) -> bytes:
     # 设置默认字体与中文字体回退
     _setup_default_font(doc)
 
-    # 添加文档标题
-    heading = doc.add_heading(title, level=0)
-    _set_chinese_font(heading.runs[0] if heading.runs else None)
+    # 添加文档元数据封面（#7）
+    if metadata:
+        _add_cover_page(doc, title, metadata)
+    else:
+        # 无元数据时仅添加标题
+        heading = doc.add_heading(title, level=0)
+        _set_chinese_font(heading.runs[0] if heading.runs else None)
 
     # 逐行解析 Markdown 并写入文档
     elements = _parse_markdown_elements(markdown)
@@ -251,6 +258,108 @@ def _extract_markdown_tables(md: str) -> List[List[List[str]]]:
 # ======================================================================
 # 内部辅助函数 —— Word 写入
 # ======================================================================
+
+def _add_cover_page(doc: Document, title: str, metadata: Dict[str, str]):
+    """添加功能安全文档封面页，含文档信息、修订历史、审批签名栏。"""
+    # 文档标题
+    heading = doc.add_heading(title, level=0)
+    heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    for run in heading.runs:
+        _set_chinese_font(run, size=Pt(22), bold=True)
+
+    doc.add_paragraph()  # 空行
+
+    # 文档信息表
+    info_table = doc.add_table(rows=0, cols=2)
+    info_table.style = 'Table Grid'
+
+    info_fields = [
+        ("文档编号", metadata.get("doc_id", "TBD")),
+        ("版本号", metadata.get("version", "1.0")),
+        ("模块名称", metadata.get("module_name", "TBD")),
+        ("ASIL 等级", metadata.get("asil_level", "TBD")),
+        ("保密等级", metadata.get("confidentiality", "内部")),
+        ("编写日期", metadata.get("date", time.strftime("%Y-%m-%d"))),
+    ]
+    for label, value in info_fields:
+        row = info_table.add_row()
+        cell_label = row.cells[0]
+        cell_value = row.cells[1]
+        cell_label.text = label
+        cell_value.text = value
+        for p in cell_label.paragraphs:
+            for run in p.runs:
+                run.bold = True
+                _set_chinese_font(run, size=Pt(10))
+        for p in cell_value.paragraphs:
+            for run in p.runs:
+                _set_chinese_font(run, size=Pt(10))
+
+    # 设置列宽
+    for row in info_table.rows:
+        row.cells[0].width = Cm(4)
+        row.cells[1].width = Cm(12)
+
+    doc.add_paragraph()  # 空行
+
+    # 修订历史表
+    doc.add_heading("修订历史", level=2)
+    rev_table = doc.add_table(rows=1, cols=4)
+    rev_table.style = 'Table Grid'
+    rev_headers = ["版本", "日期", "修订人", "修订说明"]
+    for i, h in enumerate(rev_headers):
+        cell = rev_table.rows[0].cells[i]
+        cell.text = h
+        for p in cell.paragraphs:
+            for run in p.runs:
+                run.bold = True
+                _set_chinese_font(run, size=Pt(10))
+
+    # 预填首行修订记录
+    row = rev_table.add_row()
+    row.cells[0].text = metadata.get("version", "1.0")
+    row.cells[1].text = metadata.get("date", time.strftime("%Y-%m-%d"))
+    row.cells[2].text = metadata.get("author", "")
+    row.cells[3].text = "初始版本（AI 辅助生成）"
+    for cell in row.cells:
+        for p in cell.paragraphs:
+            for run in p.runs:
+                _set_chinese_font(run, size=Pt(10))
+
+    doc.add_paragraph()  # 空行
+
+    # 审批签名栏
+    doc.add_heading("审批签名", level=2)
+    sig_table = doc.add_table(rows=1, cols=4)
+    sig_table.style = 'Table Grid'
+    sig_headers = ["角色", "姓名", "签名", "日期"]
+    for i, h in enumerate(sig_headers):
+        cell = sig_table.rows[0].cells[i]
+        cell.text = h
+        for p in cell.paragraphs:
+            for run in p.runs:
+                run.bold = True
+                _set_chinese_font(run, size=Pt(10))
+
+    sig_roles = [
+        ("编写", metadata.get("author", "")),
+        ("审核", metadata.get("reviewer", "")),
+        ("批准", metadata.get("approver", "")),
+    ]
+    for role, name in sig_roles:
+        row = sig_table.add_row()
+        row.cells[0].text = role
+        row.cells[1].text = name
+        row.cells[2].text = ""  # 留空待签名
+        row.cells[3].text = ""  # 留空待填日期
+        for cell in row.cells:
+            for p in cell.paragraphs:
+                for run in p.runs:
+                    _set_chinese_font(run, size=Pt(10))
+
+    # 分页符，封面后开始正文
+    doc.add_page_break()
+
 
 def _setup_default_font(doc: Document):
     """设置文档默认字体，配置中文字体回退（微软雅黑）。"""

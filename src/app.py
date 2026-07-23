@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-功能安全文档生成器 —— Streamlit 主界面入口
+软件功能安全文档生成器 —— Streamlit 主界面入口
 6 Agent 架构：SRS / SAD / FMEA / SDD / TC-UNIT / TC-INTEGRATION 各一个独立 Agent
 """
 
@@ -16,13 +16,14 @@ from code_parser import CodeParser
 from prompts import PromptManager
 from doc_exporter import export_to_word, export_fmea_to_excel
 from template_parser import parse_template, get_supported_extensions
+from validator import validate_document
 
 # ======================================================================
 # 页面配置
 # ======================================================================
 
 st.set_page_config(
-    page_title="功能安全文档生成器",
+    page_title="软件功能安全文档生成器",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -108,6 +109,12 @@ if "current_agent" not in st.session_state:
     st.session_state.current_agent = None
 if "shared_code" not in st.session_state:
     st.session_state.shared_code = ""
+if "agent_templates" not in st.session_state:
+    st.session_state.agent_templates = {}
+if "doc_versions" not in st.session_state:
+    st.session_state.doc_versions = {}  # {agent_type: [old_content, ...]}
+if "batch_checkpoint" not in st.session_state:
+    st.session_state.batch_checkpoint = {}  # {agent_type: status}
 
 # ── 结果持久化 ──
 _SAVE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saved_results.json")
@@ -179,6 +186,7 @@ def render_sidebar():
     _JSON_TEMPLATE = """{
   "provider": "deepseek",
   "api_key": "sk-xxx",
+  "api_keys": ["sk-key2", "sk-key3"],
   "api_base_URL": "https://api.deepseek.com/v1",
   "model": "deepseek-v4-pro",
   "max_tokens": 8192,
@@ -194,15 +202,6 @@ def render_sidebar():
         config = _render_json_mode(_JSON_TEMPLATE)
     else:
         config = _render_manual_mode()
-
-    # ── 配置导出 ──
-    st.sidebar.markdown("---")
-    export_cfg = {k: v for k, v in config.items() if k != "custom_template"}
-    st.sidebar.download_button(
-        "💾 导出当前配置为 JSON", data=json.dumps(export_cfg, ensure_ascii=False, indent=2).encode("utf-8"),
-        file_name="config.json", mime="application/json",
-        use_container_width=True, key="export_config_btn",
-    )
 
     return config
 
@@ -246,18 +245,35 @@ def _render_json_mode(template: str):
     if cfg.get("api_key"):
         st.sidebar.caption("🔑 API Key 已加载（已隐藏）")
 
-    custom_template = _render_template_upload()
+    # ── 配置导出（紧跟 LLM 配置）──
+    export_cfg = {"provider": provider,
+                  "api_key": cfg.get("api_key", ""),
+                  "api_base": cfg.get("api_base") or "",
+                  "model": cfg.get("model") or DEFAULT_MODELS.get(provider, "gpt-4o")}
+    st.sidebar.download_button(
+        "💾 导出当前 LLM 配置为 JSON",
+        data=json.dumps(export_cfg, ensure_ascii=False, indent=2).encode("utf-8"),
+        file_name="llm_config.json", mime="application/json",
+        use_container_width=True, key="export_config_btn",
+    )
+
+    # 支持 JSON 中的 api_keys 数组（多 Key 并发）
+    json_api_keys = cfg.get("api_keys", [])
+    if isinstance(json_api_keys, str):
+        json_api_keys = [k.strip() for k in json_api_keys.splitlines() if k.strip()]
+    primary_key = cfg.get("api_key", "")
+    all_keys = ([primary_key] + json_api_keys) if primary_key else json_api_keys
 
     return {
         "provider": provider,
-        "api_key": cfg.get("api_key", ""),
+        "api_key": primary_key,
         "api_base": cfg.get("api_base") or None,
         "model": cfg.get("model") or DEFAULT_MODELS.get(provider, "gpt-4o"),
         "max_tokens": cfg.get("max_tokens", 8192),
         "temperature": cfg.get("temperature", 0.2),
         "module_name": cfg.get("module_name", "目标模块"),
         "asil_level": cfg.get("asil_level", "ASIL B"),
-        "custom_template": custom_template,
+        "api_keys": all_keys,
     }
 
 
@@ -278,6 +294,21 @@ def _render_manual_mode():
     api_key = st.sidebar.text_input("API Key", type="password", placeholder="sk-...",
                                      help="密钥仅保存在当前会话内存中，不会落盘存储")
 
+    # ── 并发 Key 池（可选）──
+    with st.sidebar.expander("🔑 并发 Key 池（可选）", expanded=False):
+        extra_keys_raw = st.text_area(
+            "额外 API Key（每行一个）",
+            value="",
+            height=100,
+            placeholder="sk-key2\nsk-key3\nsk-key4",
+            help="分段并发生成时，每个分段使用不同 Key 轮转调用，避免单 Key 速率限制。\n"
+                 "留空则所有分段共用上方主 Key。",
+            key="extra_api_keys",
+        )
+        extra_keys = [k.strip() for k in extra_keys_raw.strip().splitlines() if k.strip()]
+        if extra_keys:
+            st.caption(f"✅ 已配置 {len(extra_keys)} 个额外 Key，并发时将轮转使用共 {len(extra_keys) + 1} 个 Key")
+
     default_base_url = PROVIDER_BASE_URLS.get(provider, "")
     api_base = st.sidebar.text_input("Base URL", value=default_base_url,
                                       placeholder="https://your-api.com/v1" if provider == "custom" else "留空使用默认地址",
@@ -286,24 +317,90 @@ def _render_manual_mode():
     default_model = DEFAULT_MODELS.get(provider, "gpt-4o")
     model = st.sidebar.text_input("模型名称", value=default_model, placeholder=default_model)
 
+    # ── 配置导出（紧跟 LLM 配置，紧贴模型名称下方）──
+    export_cfg = {"provider": provider, "api_key": api_key, "api_base": api_base or "",
+                  "model": model or default_model}
+    st.sidebar.download_button(
+        "💾 导出当前 LLM 配置为 JSON",
+        data=json.dumps(export_cfg, ensure_ascii=False, indent=2).encode("utf-8"),
+        file_name="llm_config.json", mime="application/json",
+        use_container_width=True, key="export_config_btn",
+    )
+
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("##### 📦 项目信息")
+    module_name = st.sidebar.text_input("软件模块名称", value="目标模块", placeholder="如: MotorController",
+                                         help="被测软件模块的名称，将用于文档标题和需求ID前缀")
+    asil_level = st.sidebar.selectbox("ASIL 等级",
+                                       options=["QM", "ASIL A", "ASIL B", "ASIL C", "ASIL D"], index=2,
+                                       help="ISO 26262 安全等级，影响文档内容和方法要求")
+
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 🔧 高级选项")
 
-    max_tokens = st.sidebar.slider("Max Tokens", min_value=1024, max_value=32768,
-                                    value=8192, step=1024, help="单次生成最大 token 数")
-    temperature = st.sidebar.slider("Temperature", min_value=0.0, max_value=1.0,
-                                     value=0.2, step=0.05, help="温度参数，越低输出越确定")
-    module_name = st.sidebar.text_input("模块名称", value="目标模块", placeholder="如: MotorController")
-    asil_level = st.sidebar.selectbox("ASIL 等级",
-                                       options=["QM", "ASIL A", "ASIL B", "ASIL C", "ASIL D"], index=2)
+    # 根据 ASIL 等级给出推荐参数值
+    _TOKEN_DEFAULT = {
+        "QM":     4096,
+        "ASIL A": 8192,
+        "ASIL B": 8192,
+        "ASIL C": 12288,
+        "ASIL D": 16384,
+    }
+    _TEMP_DEFAULT = {
+        "QM":     0.30,
+        "ASIL A": 0.20,
+        "ASIL B": 0.15,
+        "ASIL C": 0.10,
+        "ASIL D": 0.05,
+    }
+    _TOKEN_HINT = {
+        "QM":     "QM 文档较简略，推荐 4096~8192",
+        "ASIL A": "推荐 8192~12288",
+        "ASIL B": "推荐 8192~16384",
+        "ASIL C": "文档详细，推荐 12288~20480",
+        "ASIL D": "最详尽，推荐 16384~32768",
+    }
+    _TEMP_HINT = {
+        "QM":     "可适当提高创造性（0.3~0.5）",
+        "ASIL A": "建议 0.2~0.3",
+        "ASIL B": "建议 0.1~0.2，确保准确性",
+        "ASIL C": "建议 0.1~0.15，高确定性",
+        "ASIL D": "建议 0.0~0.1，最高确定性",
+    }
 
-    custom_template = _render_template_upload()
+    # ASIL 切换时自动更新推荐值
+    if "_last_asil" not in st.session_state or st.session_state._last_asil != asil_level:
+        st.session_state._last_asil = asil_level
+        st.session_state._auto_tokens = _TOKEN_DEFAULT.get(asil_level, 8192)
+        st.session_state._auto_temp = _TEMP_DEFAULT.get(asil_level, 0.20)
+
+    token_hint = _TOKEN_HINT.get(asil_level, "")
+    temp_hint = _TEMP_HINT.get(asil_level, "")
+
+    max_tokens = st.sidebar.slider(
+        "Max Tokens",
+        min_value=1024, max_value=32768,
+        value=st.session_state.get("_auto_tokens", 8192), step=1024,
+        help="单次生成最大 token 数。值越大文档越长，截断时请增大此值或启用分段并发生成。"
+    )
+    st.sidebar.caption(f"💡 {token_hint}")
+
+    temperature = st.sidebar.slider(
+        "Temperature",
+        min_value=0.0, max_value=1.0,
+        value=st.session_state.get("_auto_temp", 0.20), step=0.01,
+        help="输出随机性。0=完全确定，0.2=推荐值，0.5+=创造性增强（需求文档不建议）。"
+    )
+    st.sidebar.caption(f"💡 {temp_hint}")
+
+    # 合并主 Key + 额外 Key 池
+    all_keys = [api_key] + extra_keys if api_key else extra_keys
 
     return {
         "provider": provider, "api_key": api_key, "api_base": api_base or None,
         "model": model or default_model, "max_tokens": max_tokens,
         "temperature": temperature, "module_name": module_name,
-        "asil_level": asil_level, "custom_template": custom_template,
+        "asil_level": asil_level, "api_keys": all_keys,
     }
 
 
@@ -311,54 +408,46 @@ def _empty_config():
     return {
         "provider": "openai", "api_key": "", "api_base": None, "model": "gpt-4o",
         "max_tokens": 8192, "temperature": 0.2, "module_name": "目标模块",
-        "asil_level": "ASIL B", "custom_template": None,
+        "asil_level": "ASIL B", "api_keys": [],
     }
 
 
-def _render_template_upload():
-    """渲染自定义文档模板上传区域。"""
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### 📎 自定义文档模板")
+def _render_agent_template_upload(agent_type: str):
+    """渲染单个 Agent 的自定义文档模板上传区域。"""
+    templates = st.session_state.agent_templates
+    current = templates.get(agent_type)
 
-    if "custom_template_text" not in st.session_state:
-        st.session_state.custom_template_text = None
-    if "template_file_name" not in st.session_state:
-        st.session_state.template_file_name = None
-
-    uploaded_template = st.sidebar.file_uploader(
-        "上传文档模板", type=get_supported_extensions(),
-        help="支持 .md / .txt / .docx / .xlsx 格式", key="template_uploader",
+    uploaded = st.file_uploader(
+        f" 上传 {agent_type} 文档模板（可选）",
+        type=get_supported_extensions(),
+        help="支持 .md / .txt / .docx / .xlsx 格式，不上传则使用默认模板",
+        key=f"template_{agent_type}",
     )
 
-    if uploaded_template is not None:
-        if st.session_state.template_file_name != uploaded_template.name:
-            parsed = parse_template(uploaded_template)
-            if parsed:
-                st.session_state.custom_template_text = parsed
-                st.session_state.template_file_name = uploaded_template.name
-                st.sidebar.success(f"✅ 模板已加载: {uploaded_template.name}")
-            else:
-                st.session_state.custom_template_text = None
-                st.session_state.template_file_name = None
-                st.sidebar.error(f"❌ 解析失败: {uploaded_template.name}")
+    if uploaded is not None:
+        parsed = parse_template(uploaded)
+        if parsed:
+            templates[agent_type] = parsed
+            st.success(f"✅ {agent_type} 模板已加载: {uploaded.name}")
         else:
-            st.sidebar.success(f"✅ 模板已加载: {uploaded_template.name}")
-    elif st.session_state.template_file_name is not None and uploaded_template is None:
-        st.session_state.custom_template_text = None
-        st.session_state.template_file_name = None
+            templates.pop(agent_type, None)
+            st.error(f"❌ 模板解析失败: {uploaded.name}")
+    elif current is not None and uploaded is None:
+        # 用户清除了上传的文件
+        templates.pop(agent_type, None)
 
-    if st.session_state.custom_template_text:
-        preview_len = len(st.session_state.custom_template_text)
-        with st.sidebar.expander(f"👁️ 模板预览 ({preview_len} 字符)"):
-            st.code(st.session_state.custom_template_text[:3000], language="text")
+    template = templates.get(agent_type)
+    if template:
+        preview_len = len(template)
+        with st.expander(f"👁️ {agent_type} 模板预览 ({preview_len} 字符)"):
+            st.code(template[:3000], language="text")
             if preview_len > 3000:
                 st.caption(f"... 已截断显示（共 {preview_len} 字符）")
-        if st.sidebar.button("✕ 清除模板", key="clear_template"):
-            st.session_state.custom_template_text = None
-            st.session_state.template_file_name = None
+        if st.button(f"✕ 清除 {agent_type} 模板", key=f"clear_tpl_{agent_type}"):
+            templates.pop(agent_type, None)
             st.rerun()
 
-    return st.session_state.custom_template_text
+    return template
 
 
 # ======================================================================
@@ -380,7 +469,7 @@ def render_main_area(config: dict):
 
 def _render_dashboard(config: dict):
     """渲染 Agent 仪表盘：6 张卡片 + 批量操作 + 已完成文档汇总。"""
-    st.markdown('<p class="main-title">🛡️ 功能安全文档生成器</p>', unsafe_allow_html=True)
+    st.markdown('<p class="main-title">🛡️ 软件功能安全文档生成器</p>', unsafe_allow_html=True)
     st.markdown(
         '<p class="sub-title">选择 Agent 开始生成 —— 每个 Agent 专注一份 ISO 26262 / ASPICE 文档</p>',
         unsafe_allow_html=True,
@@ -405,10 +494,10 @@ def _render_dashboard(config: dict):
             st.markdown(f"""
             <div style="background: {meta['color']}; border-radius: 12px; padding: 20px;
                         color: white; display: flex; flex-direction: column;
-                        min-height: 200px;">
+                        height: 260px;">
                 <div style="text-align: center;">
                     <div style="font-size: 2.5rem;">{meta['icon']}</div>
-                    <h3 style="margin: 6px 0 2px 0;">{meta['name']}</h3>
+                    <h3 style="margin: 6px 0 2px 0; font-size: 1.1rem; line-height: 1.3;">{meta['name']}</h3>
                     <p style="font-size: 0.8rem; opacity: 0.85; margin: 2px 0;">{meta['full']}</p>
                 </div>
                 <p style="font-size: 0.75rem; opacity: 0.75; flex-grow: 1; margin: 8px 0; line-height: 1.4;">{meta['desc']}</p>
@@ -437,7 +526,7 @@ def _render_dashboard(config: dict):
             _batch_generate_all(config)
     with bc2:
         if docs:
-            zip_bytes = _export_all_as_zip(docs, config["module_name"])
+            zip_bytes = _export_all_as_zip(docs, config["module_name"], config.get("asil_level", "ASIL B"))
             st.download_button("📦 打包下载全部 (.zip)", data=zip_bytes,
                                file_name=f"{config['module_name']}_全部文档.zip",
                                mime="application/zip", use_container_width=True, key="zip_all")
@@ -473,9 +562,12 @@ def _render_dashboard(config: dict):
 def _batch_generate_all(config: dict):
     """按 SRS→SAD→FMEA→SDD→TC-UNIT→TC-INTEGRATION 顺序批量生成全部文档。"""
     order = ["SRS", "SAD", "FMEA", "SDD", "TC-UNIT", "TC-INTEGRATION"]
+    _AGENT_TOKEN_DEFAULT = {
+        "SRS": 8192, "SAD": 12288, "FMEA": 16384,
+        "SDD": 12288, "TC-UNIT": 12288, "TC-INTEGRATION": 12288,
+    }
     code = st.session_state.shared_code
     prompt_mgr = PromptManager()
-    custom_template = config.get("custom_template")
     base_ctx = {"module_name": config["module_name"], "asil_level": config["asil_level"]}
 
     try:
@@ -485,7 +577,20 @@ def _batch_generate_all(config: dict):
         return
 
     progress = st.progress(0, text="批量生成中...")
+
+    # #9 断点续传：检查是否有已完成的节点
+    checkpoint = st.session_state.batch_checkpoint
+    start_idx = 0
+    if checkpoint:
+        completed = [a for a in order if checkpoint.get(a) == "done"]
+        if completed:
+            start_idx = order.index(completed[-1]) + 1
+            st.info(f"🔄 检测到上次进度，从 {order[start_idx]} 继续生成（已完成 {len(completed)}/{len(order)}）")
+
     for i, agent_type in enumerate(order):
+        if i < start_idx:
+            continue
+
         progress.progress(i / len(order), text=f"正在生成 {agent_type}（{i+1}/{len(order)}）...")
 
         ctx = dict(base_ctx)
@@ -499,27 +604,46 @@ def _batch_generate_all(config: dict):
                 ctx["prior_docs"] = prior
 
         container = st.empty()
-        text = _generate_single_doc(engine, prompt_mgr, agent_type, code, ctx, custom_template, container)
+        # 每个 Agent 使用独立的 max_tokens
+        engine.max_tokens = _AGENT_TOKEN_DEFAULT.get(agent_type, config.get("max_tokens", 8192))
+        text = _generate_single_doc(engine, prompt_mgr, agent_type, code, ctx, st.session_state.agent_templates.get(agent_type), container)
         st.session_state.generated_docs[agent_type] = text
+
+        # #8 质量校验（传入模板用于结构对比）
+        template = st.session_state.agent_templates.get(agent_type)
+        validation = validate_document(agent_type, text, custom_template=template)
         st.session_state.generation_history.append({
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "module": config["module_name"], "doc_type": agent_type,
             "status": "成功" if not text.startswith("生成失败") else "失败",
+            "validation": validation.summary(),
         })
 
+        # #9 保存检查点
+        checkpoint[agent_type] = "done"
+        _persist()
+
     progress.progress(1.0, text="✅ 全部完成！")
+    st.session_state.batch_checkpoint = {}
     _persist()
-    st.success("🎉 6 份文档全部生成完成！")
+    st.success(" 6 份文档全部生成完成！")
 
 
-def _export_all_as_zip(docs: dict, module_name: str) -> bytes:
+def _export_all_as_zip(docs: dict, module_name: str, asil_level: str = "ASIL B") -> bytes:
     """将所有已生成文档打包为 zip（含 .md + .docx，FMEA 额外含 .xlsx）。"""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for dt, content in docs.items():
             zf.writestr(f"{module_name}_{dt}.md", content)
             try:
-                word_bytes = export_to_word(title=f"{module_name} {dt} 文档", markdown=content)
+                metadata = {
+                    "doc_id": f"DOC-{dt}-{module_name}",
+                    "version": "1.0",
+                    "module_name": module_name,
+                    "asil_level": asil_level,
+                    "date": time.strftime("%Y-%m-%d"),
+                }
+                word_bytes = export_to_word(title=f"{module_name} {dt} 文档", markdown=content, metadata=metadata)
                 zf.writestr(f"{module_name}_{dt}.docx", word_bytes)
             except Exception:
                 pass
@@ -556,25 +680,39 @@ def _render_agent_workspace(agent_type: str, config: dict):
     st.caption(meta["desc"])
     st.markdown("---")
 
+    # ── 自定义文档模板 ──
+    agent_template = _render_agent_template_upload(agent_type)
+
     # ── 代码输入 ──
     code = _render_code_input()
 
     # ── FMEA 前置上下文提示 ──
+    _fmea_missing_prior = False
     if agent_type == "FMEA":
+        has_srs = "SRS" in st.session_state.generated_docs
+        has_sad = "SAD" in st.session_state.generated_docs
+        _fmea_missing_prior = not (has_srs and has_sad)
         prior_info = []
-        if "SRS" in st.session_state.generated_docs:
-            prior_info.append("✅ SRS 已就绪")
+        prior_info.append("✅ SRS 已就绪" if has_srs else "❌ SRS 未生成")
+        prior_info.append("✅ SAD 已就绪" if has_sad else "❌ SAD 未生成")
+        if _fmea_missing_prior:
+            st.warning(
+                "⚠️ **FMEA 前置文档不完整**：" + " | ".join(prior_info) + "\n\n"
+                "建议先完成 SRS 和 SAD Agent 的生成，FMEA 将自动引用其分析结果，"
+                "使失效影响可追溯到安全需求、失效模式可关联到架构组件，显著提升分析覆盖度和追溯性。\n\n"
+                "如跳过，FMEA 仍可基于源代码独立生成，但追溯矩阵和覆盖分析将不完整。"
+            )
         else:
-            prior_info.append("⚠️ SRS 未生成（建议先生成 SRS Agent）")
-        if "SAD" in st.session_state.generated_docs:
-            prior_info.append("✅ SAD 已就绪")
-        else:
-            prior_info.append("⚠️ SAD 未生成（建议先生成 SAD Agent）")
-        st.info("🔗 **FMEA 前置上下文**: " + " | ".join(prior_info))
+            st.success("🔗 **FMEA 前置上下文**: " + " | ".join(prior_info) + " — 将自动注入生成")
 
     # ── 生成选项（折叠面板）──
+    # 每个 Agent 的推荐 Max Tokens
+    _AGENT_TOKEN_DEFAULT = {
+        "SRS": 8192, "SAD": 12288, "FMEA": 16384,
+        "SDD": 12288, "TC-UNIT": 12288, "TC-INTEGRATION": 12288,
+    }
     with st.expander("⚙️ 生成选项", expanded=False):
-        opt_col1, opt_col2 = st.columns(2)
+        opt_col1, opt_col2, opt_col3 = st.columns(3)
         with opt_col1:
             chunked_mode = st.checkbox("📑 分段并发生成", value=False,
                                         help="按章节拆分并行生成，提速 2~3 倍",
@@ -583,6 +721,15 @@ def _render_agent_workspace(agent_type: str, config: dict):
             review_mode = st.checkbox("🔍 双模型审查修订", value=False,
                                        help="生成后由第二个模型审查修正",
                                        key=f"review_{agent_type}")
+        with opt_col3:
+            agent_max_tokens = st.number_input(
+                "📏 Max Tokens", min_value=1024, max_value=65536,
+                value=_AGENT_TOKEN_DEFAULT.get(agent_type, config.get("max_tokens", 8192)),
+                step=1024,
+                help=f"当前 Agent 单次生成最大 token 数（全局值: {config.get('max_tokens', 8192)}）。"
+                     f"文档被截断时请增大此值。",
+                key=f"max_tokens_{agent_type}",
+            )
 
         review_provider_cfg = {}
         if review_mode:
@@ -624,12 +771,15 @@ def _render_agent_workspace(agent_type: str, config: dict):
         use_container_width=True, disabled=not can_generate,
     )
 
-    if config.get("custom_template"):
-        st.info("📎 已启用自定义文档模板")
+    if agent_template:
+        st.info(f" 已启用 {agent_type} 自定义文档模板")
 
     # ── 执行生成 ──
     if generate_clicked and can_generate:
-        _run_single_agent_generation(agent_type, code, config, chunked_mode, review_mode, review_provider_cfg)
+        # 使用 Agent 级别的 max_tokens 覆盖全局配置
+        agent_config = dict(config)
+        agent_config["max_tokens"] = agent_max_tokens
+        _run_single_agent_generation(agent_type, code, agent_config, chunked_mode, review_mode, review_provider_cfg, agent_template)
 
     # ── 显示结果 ──
     _render_agent_result(agent_type, config)
@@ -652,6 +802,13 @@ def _render_code_input() -> str:
             help="支持 .c / .h / .cpp / .hpp / .cc / .cxx 文件，可多选",
             key="agent_file_upload",
         )
+        # 检测用户是否删除了已上传的文件 → 同步清空缓存
+        _had_files = st.session_state.get("_had_uploaded_files", False)
+        _has_files_now = bool(uploaded_files)
+        if _had_files and not _has_files_now:
+            st.session_state.shared_code = ""
+        st.session_state._had_uploaded_files = _has_files_now
+
         if uploaded_files:
             code_parts = []
             skipped = []
@@ -784,12 +941,11 @@ def _render_code_preview(code: str):
 # 单 Agent 生成
 # ======================================================================
 
-def _run_single_agent_generation(agent_type, code, config, chunked_mode, review_mode, review_provider):
+def _run_single_agent_generation(agent_type, code, config, chunked_mode, review_mode, review_provider, custom_template=None):
     """为单个 Agent 执行文档生成（支持分段并发 + 审查修订）。"""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     prompt_mgr = PromptManager()
-    custom_template = config.get("custom_template")
     base_context = {"module_name": config["module_name"], "asil_level": config["asil_level"]}
 
     # FMEA 注入前置文档
@@ -816,20 +972,35 @@ def _run_single_agent_generation(agent_type, code, config, chunked_mode, review_
     if chunked_mode:
         chunks = prompt_mgr.get_chunk_prompts(agent_type, code, ctx, custom_template=custom_template)
         if len(chunks) > 1:
-            status.info(f"📑 分为 {len(chunks)} 段并发生成")
+            # ── 构建多 Key 引擎池（轮转分配）──
+            api_keys = config.get("api_keys") or []
+            api_keys = [k for k in api_keys if k]  # 过滤空值
+            if len(api_keys) > 1:
+                engine_pool = []
+                for k in api_keys:
+                    cfg_copy = dict(config)
+                    cfg_copy["api_key"] = k
+                    engine_pool.append(_make_engine(cfg_copy))
+                status.info(f"📑 分为 {len(chunks)} 段并发生成 | 🔑 使用 {len(engine_pool)} 个 Key 轮转")
+            else:
+                engine_pool = [engine]
+                status.info(f"📑 分为 {len(chunks)} 段并发生成")
+
             cols = st.columns(min(len(chunks), 3))
             containers = []
             for i, (title, _) in enumerate(chunks):
                 with cols[i % len(cols)]:
-                    st.markdown(f"**{title}**")
+                    key_label = f" (Key#{i % len(engine_pool) + 1})" if len(engine_pool) > 1 else ""
+                    st.markdown(f"**{title}**{key_label}")
                     containers.append(st.empty())
 
             chunk_results = [None] * len(chunks)
 
             def _worker(ci, _, cprompt):
+                chunk_engine = engine_pool[ci % len(engine_pool)]
                 text = ""
                 try:
-                    for c in engine.stream_generate(cprompt):
+                    for c in chunk_engine.stream_generate(cprompt):
                         text += c
                         containers[ci].markdown(text + "▌")
                         time.sleep(0.008)
@@ -857,11 +1028,23 @@ def _run_single_agent_generation(agent_type, code, config, chunked_mode, review_
                                           custom_template, result_container)
 
     # 保存结果
+    # #10 版本记录：保存旧版本用于 Diff
+    if agent_type in st.session_state.generated_docs:
+        if agent_type not in st.session_state.doc_versions:
+            st.session_state.doc_versions[agent_type] = []
+        st.session_state.doc_versions[agent_type].append(st.session_state.generated_docs[agent_type])
+        # 只保留最近 5 个版本
+        st.session_state.doc_versions[agent_type] = st.session_state.doc_versions[agent_type][-5:]
+
     st.session_state.generated_docs[agent_type] = full_text
+
+    # #8 质量校验
+    validation = validate_document(agent_type, full_text, custom_template=custom_template)
     st.session_state.generation_history.append({
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "module": config["module_name"], "doc_type": agent_type,
         "status": "成功" if not full_text.startswith("生成失败") else "失败",
+        "validation": validation.summary(),
     })
     _persist()
 
@@ -947,6 +1130,15 @@ def _generate_single_doc(engine, prompt_mgr, doc_type, code, context, custom_tem
 # Agent 结果展示 & 下载
 # ======================================================================
 
+def _generate_diff(old_text: str, new_text: str) -> str:
+    """生成简易的文本 Diff 输出（unified diff 格式）。"""
+    import difflib
+    old_lines = old_text.splitlines(keepends=True)
+    new_lines = new_text.splitlines(keepends=True)
+    diff = difflib.unified_diff(old_lines, new_lines, fromfile="上一版本", tofile="当前版本", lineterm="")
+    return "".join(diff)
+
+
 def _render_agent_result(agent_type: str, config: dict):
     """渲染单个 Agent 的结果和下载按钮。"""
     docs = st.session_state.generated_docs
@@ -958,8 +1150,30 @@ def _render_agent_result(agent_type: str, config: dict):
     st.markdown("## 📄 生成结果")
     st.markdown(content)
 
-    # 原始版本对比（如果有审查修订）
+    # #8 质量校验报告
+    template = st.session_state.agent_templates.get(agent_type)
+    validation = validate_document(agent_type, content, custom_template=template)
+    with st.expander(f"🔍 质量校验报告 ({validation.summary()})", expanded=False):
+        for result in validation.results:
+            icon = {"error": "❌", "warning": "⚠️", "info": "️"}.get(result.severity, "ℹ️")
+            st.markdown(f"{icon} **{result.check_name}**: {result.message}")
+            if result.details:
+                st.caption(result.details)
+
+    # #10 文档版本对比/Diff
+    versions = st.session_state.doc_versions.get(agent_type, [])
     orig_key = f"original_{agent_type}"
+    if orig_key in st.session_state:
+        versions.append(st.session_state[orig_key])
+
+    if versions:
+        with st.expander(f"📊 文档版本对比（{len(versions)} 个历史版本）", expanded=False):
+            st.markdown(f"**当前版本** vs **上一版本**")
+            old_content = versions[-1]
+            diff_lines = _generate_diff(old_content, content)
+            st.code(diff_lines, language="diff")
+
+    # 原始版本对比（如果有审查修订）
     if orig_key in st.session_state:
         with st.expander("📋 查看审查前原始版本"):
             st.markdown(st.session_state[orig_key])
@@ -975,7 +1189,14 @@ def _render_agent_result(agent_type: str, config: dict):
                             key=f"dl_md_{agent_type}")
     with dl2:
         try:
-            word_bytes = export_to_word(title=f"{config['module_name']} {agent_type} 文档", markdown=content)
+            metadata = {
+                "doc_id": f"DOC-{agent_type}-{config['module_name']}",
+                "version": "1.0",
+                "module_name": config["module_name"],
+                "asil_level": config["asil_level"],
+                "date": time.strftime("%Y-%m-%d"),
+            }
+            word_bytes = export_to_word(title=f"{config['module_name']} {agent_type} 文档", markdown=content, metadata=metadata)
             st.download_button("📝 下载 Word (.docx)", data=word_bytes,
                                 file_name=f"{config['module_name']}_{agent_type}.docx",
                                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",

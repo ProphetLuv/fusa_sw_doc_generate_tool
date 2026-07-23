@@ -7,9 +7,87 @@
 - SDD            : 软件详细设计（Software Detailed Design）
 - TC-UNIT        : 单元测试用例（Unit Test Cases）
 - TC-INTEGRATION : 集成测试用例（Integration Test Cases）
+
+特性：
+- ASIL 等级差异化要求（#1）
+- FMEA 支持 AI-AP 行动优先级（#2）
+- 双向追溯矩阵增强（#4）
+- SWE.4 软件单元验证输出（#5）
 """
 
 from typing import Dict, Any, Optional
+
+
+# ASIL 等级对应的 ISO 26262 Part 6 方法要求
+_ASIL_REQUIREMENTS = {
+    "QM": (
+        "- 无特殊功能安全要求，按常规软件工程实践即可\n"
+        "- 建议遵循基本编码规范，但不强制 MISRA C 合规"
+    ),
+    "ASIL A": (
+        "- 需要结构化分析（SAD/SDD）\n"
+        "- 单元测试建议达到语句覆盖率 ≥ 80%\n"
+        "- 建议遵循 MISRA C:2012 规则，偏差需记录\n"
+        "- 需要基本的故障检测机制"
+    ),
+    "ASIL B": (
+        "- 需要完整的 SRS/SAD/SDD 文档链\n"
+        "- 单元测试需达到分支覆盖率 ≥ 80%\n"
+        "- 必须遵循 MISRA C:2012 规则，偏差需论证\n"
+        "- 需要 FMEA 分析覆盖所有安全相关功能\n"
+        "- 需要看门狗、CRC 等基本安全机制"
+    ),
+    "ASIL C": (
+        "- 需要完整的文档链 + 双向追溯矩阵\n"
+        "- 单元测试需达到分支覆盖率 ≥ 90%\n"
+        "- 必须遵循 MISRA C:2012 规则，零偏差容忍\n"
+        "- 需要 FMEA + FTA 组合分析\n"
+        "- 需要冗余设计或多样性设计\n"
+        "- 需要独立的代码审查和静态分析"
+    ),
+    "ASIL D": (
+        "- 需要完整的文档链 + 双向追溯矩阵（需求↔设计↔代码测试）\n"
+        "- 单元测试需达到 MC/DC 覆盖率 ≥ 90%\n"
+        "- 必须遵循 MISRA C:2012 规则，零偏差容忍\n"
+        "- 需要 FMEA + FTA + DFA 组合分析\n"
+        "- 需要软件多样性或硬件冗余\n"
+        "- 需要独立的验证和确认（V&V）\n"
+        "- 需要 WCET 分析和栈使用分析\n"
+        "- 需要防御性编程和故障注入测试"
+    ),
+}
+
+
+def _get_asil_requirements(asil_level: str) -> str:
+    """获取 ASIL 等级对应的 ISO 26262 方法要求文本。"""
+    return _ASIL_REQUIREMENTS.get(asil_level, _ASIL_REQUIREMENTS["ASIL B"])
+
+
+# ASIL 等级对应的覆盖率要求（用于 TC-UNIT）
+_Asil_COVERAGE = {
+    "QM":    "语句覆盖率（无硬性指标）",
+    "ASIL A": "语句覆盖率 ≥ 80%",
+    "ASIL B": "分支覆盖率 ≥ 80%",
+    "ASIL C": "分支覆盖率 ≥ 90%",
+    "ASIL D": "MC/DC 覆盖率 ≥ 90%",
+}
+
+
+def _get_asil_coverage(asil_level: str) -> str:
+    return _Asil_COVERAGE.get(asil_level, _Asil_COVERAGE["ASIL B"])
+
+
+# AI-AP 判定表说明（ISO 26262:2018 Part 3）
+_AI_AP_TABLE = """
+**AI-AP（行动优先级）判定规则**（依据 ISO 26262:2018 Part 3）：
+
+AI-AP 由严重度(S)、发生度(O)、检测度(D) 三者组合决定，分为高(H)、中(M)、低(L)三级：
+- **H（高）**：必须采取改进措施。典型组合：S≥7 且 O≥4；或 S≥5 且 O≥5 且 D≥5
+- **M（中）**：建议采取改进措施。典型组合：S≥4 且 O≥3 且 D≥4；或其他中等风险组合
+- **L（低）**：可接受，无需额外措施
+
+注意：AI-AP 不完全等同于 RPN 排序。即使 RPN 较低，若 S 很高（≥7），AI-AP 仍可能为 H。
+"""
 
 
 class PromptManager:
@@ -17,7 +95,6 @@ class PromptManager:
     Prompt 管理器，根据文档类型分发到对应的专业 Prompt 模板。
     """
 
-    # 支持的文档类型枚举
     DOC_TYPES = ("SRS", "SAD", "FMEA", "SDD", "TC-UNIT", "TC-INTEGRATION")
 
     def get_prompt(
@@ -27,18 +104,6 @@ class PromptManager:
         context: Optional[Dict[str, Any]] = None,
         custom_template: Optional[str] = None,
     ) -> str:
-        """
-        根据文档类型获取完整 Prompt。
-
-        Args:
-            doc_type:         文档类型，可选 SRS / SAD / FMEA / SDD / TC-UNIT / TC-INTEGRATION
-            code:             待分析的 C/C++ 源代码
-            context:          可选上下文，如 module_name, asil_level, prior_docs 等
-            custom_template:  用户上传的自定义文档模板文本，用于覆盖默认输出格式
-
-        Returns:
-            拼装完成的完整 prompt 字符串
-        """
         ctx = context or {}
         module_name = ctx.get("module_name", "目标模块")
         asil_level = ctx.get("asil_level", "ASIL B")
@@ -58,22 +123,16 @@ class PromptManager:
 
         prompt = builder(code, module_name, asil_level)
 
-        # 如果有前置文档（如 FMEA 需要 SRS + SAD 作为输入），注入上下文
         prior_docs = ctx.get("prior_docs")
         if prior_docs:
             prompt = self._inject_prior_docs(prompt, prior_docs)
 
-        # 如果提供了自定义模板，追加模板指令
         if custom_template:
             prompt = self._apply_custom_template(prompt, custom_template)
 
         return prompt
 
     def _apply_custom_template(self, base_prompt: str, template: str) -> str:
-        """
-        将用户上传的自定义模板注入到基础 Prompt 中。
-        指示大模型严格按照模板格式输出，替换默认的格式要求。
-        """
         template_instruction = f"""
 
 ## ⚠️ 重要：自定义输出格式要求
@@ -93,10 +152,6 @@ class PromptManager:
         return base_prompt + template_instruction
 
     def _inject_prior_docs(self, base_prompt: str, prior_docs: Dict[str, str]) -> str:
-        """
-        将前置文档（如已生成的 SRS、SAD）注入到 Prompt 中作为分析上下文。
-        prior_docs 格式: {"SRS": "srs内容...", "SAD": "sad内容..."}
-        """
         sections = []
         for doc_type, content in prior_docs.items():
             if content:
@@ -105,16 +160,32 @@ class PromptManager:
         if not sections:
             return base_prompt
 
-        prior_section = "\n\n## 📎 前置参考文档\n\n以下是已生成的前置文档，请在分析时充分参考这些文档中的信息：\n\n" + "\n".join(sections)
-        # 插入到代码块之前（即 prompt 的前半部分之后）
+        prior_section = "\n\n##  前置参考文档\n\n以下是已生成的前置文档，请在分析时充分参考这些文档中的信息：\n\n" + "\n".join(sections)
         return base_prompt + prior_section
 
     # ------------------------------------------------------------------
-    # SRS - 软件需求规格说明
+    # SRS - 软件需求规格说明（#1 ASIL差异化 + #4 追溯矩阵增强）
     # ------------------------------------------------------------------
 
     def _build_srs_prompt(self, code: str, module_name: str, asil_level: str) -> str:
-        """构建 SRS 文档生成 Prompt"""
+        asil_req = _get_asil_requirements(asil_level)
+        safety_extra = ""
+        if asil_level not in ("QM", "ASIL A"):
+            safety_extra = f"""
+对于 **{asil_level}** 等级，安全需求必须包含：
+- 故障检测与诊断机制（具体检测方法和响应时间要求）
+- 安全状态定义和转换条件（明确定义每个安全状态及触发条件）
+- 降级/容错策略（多级降级路径）
+- 硬件-软件安全接口要求（HSI）"""
+
+        nonfunc_extra = ""
+        if asil_level not in ("QM", "ASIL A"):
+            nonfunc_extra = f"""
+对于 **{asil_level}** 等级，非功能需求必须明确列出：
+- WCET（最坏情况执行时间）约束及分析方法
+- RAM/ROM 使用上限
+- 任务调度时序约束"""
+
         return f"""你是一名功能安全工程师，请根据以下 C/C++ 嵌入式代码，逆向提取并撰写符合 ISO 26262 / ASPICE 标准的**软件需求规格说明书（SRS）**。
 
 ## 模块名称
@@ -122,6 +193,9 @@ class PromptManager:
 
 ## ASIL 等级
 {asil_level}
+
+## 本 ASIL 等级的 ISO 26262 Part 6 方法要求
+{asil_req}
 
 ## 源代码
 ```c
@@ -139,39 +213,69 @@ class PromptManager:
 
 ## 2. 功能需求
 
-以表格形式列出每条需求，表格列定义如下：
+以表格形式列出每条需求：
 
-| 需求ID | 需求描述 | 需求类型 | ASIL等级 | 验证方法 | 追溯代码 |
-|--------|----------|----------|----------|----------|----------|
+| 需求ID | 前置条件 | 需求描述 | 预期结果 | 需求类型 | ASIL等级 | 验证方法 | 追溯代码 |
+|--------|----------|----------|----------|----------|----------|----------|----------|
 
 要求：
-- **需求ID**：格式为 SRS-MOD-XXX（MOD为模块缩写，XXX为三位序号）
-- **需求描述**：使用 "shall" 句式，如 "The module shall ..."，描述必须清晰、可验证、无歧义
+- **需求ID**：格式为 SRS-MOD-XXX（MOD为模块缩写，XXX为三位序号，从001开始连续编号）
+- **【强制约束】每个需求ID必须全局唯一，严禁重复！** 每写一条需求前，先检查该ID是否已在文档中出现过。如果已存在则使用下一个序号。全文不得有任何两个相同的需求ID。
+- **前置条件**：描述触发该需求的前提状态或输入条件（如“当电机处于 RUNNING 状态时”、“当检测到过流信号时”）
+- **需求描述**：使用“系统 shall …”句式，描述系统/模块应执行的动作
+- **预期结果**：描述执行后应得到的具体可验证结果（如“PWM占空比降为0，电机进入制动状态”）
+- 完整格式示例：“当[前置条件]满足时，[系统] shall 执行[动作]，得到[预期结果]”
 - **需求类型**：功能需求 / 性能需求 / 接口需求 / 安全需求 / 可靠性需求
 - **ASIL等级**：{asil_level}（可根据安全相关性调整子需求的等级）
-- **验证方法**：测试 / 分析 / 检查 / 演示（选择最合适的一种或多种）
+- **验证方法**：测试 / 分析 / 检查 / 演示
 - **追溯代码**：对应到具体的函数名或代码行
 
 ## 3. 非功能需求
-包括性能约束（WCET、RAM/ROM 占用）、可靠性要求（看门狗、ECC）、可维护性要求等。
+包括性能约束、可靠性要求、可维护性要求等。
+{nonfunc_extra}
 
 ## 4. 接口需求
 描述模块与外部的接口（硬件接口、软件接口、通信协议等），以表格形式列出。
 
 ## 5. 安全需求
 与功能安全相关的特殊需求，包括故障检测、安全状态转换、降级策略等。
+{safety_extra}
 
-## 6. 追溯矩阵
-需求与代码函数的双向追溯表。
+## 6. 双向追溯矩阵（增强版）
 
-请确保需求覆盖代码中的所有关键逻辑，不要遗漏任何重要的功能点和安全机制。"""
+需求与代码函数、测试用例的完整追溯链，格式如下：
+
+| 需求ID | 需求描述 | 对应函数 | 对应测试用例ID | 覆盖状态 |
+|--------|----------|----------|---------------|----------|
+
+要求：
+- 每条需求必须追溯到至少一个代码函数
+- 每个安全相关函数必须有对应的测试用例ID（格式 UT-MOD-XXX）
+- 覆盖状态：✅已覆盖 / ⚠️部分覆盖 / 未覆盖
+- 在表格末尾添加**追溯覆盖率统计**：已覆盖需求数 / 总需求数 = 覆盖率%
+- 标注所有 ❌未覆盖 的需求，说明原因和风险分析
+
+请确保需求覆盖代码中的所有关键逻辑，不遗漏任何重要的功能点和安全机制。
+
+【输出前自检清单】
+1. 所有需求ID是否唯一？（逐个检查，无重复）
+2. 编号是否从001开始连续递增？
+3. 追溯矩阵中的ID是否与需求表中的ID完全一致？"""
 
     # ------------------------------------------------------------------
-    # SAD - 软件架构设计文档
+    # SAD - 软件架构设计文档（#1 ASIL差异化）
     # ------------------------------------------------------------------
 
     def _build_sad_prompt(self, code: str, module_name: str, asil_level: str) -> str:
-        """构建 SAD（软件架构设计）文档生成 Prompt"""
+        asil_req = _get_asil_requirements(asil_level)
+        safety_extra = ""
+        if asil_level in ("ASIL C", "ASIL D"):
+            safety_extra = """
+### 10.4 多样性与冗余设计（ASIL C/D 必需）
+- 软件多样性策略（不同算法实现同一功能）
+- 硬件冗余方案（如适用）
+- 投票/比较机制设计"""
+
         return f"""你是一名功能安全工程师，请根据以下 C/C++ 嵌入式代码，撰写符合 ISO 26262 / ASPICE 标准的**软件架构设计文档（SAD）**。
 
 ## 模块名称
@@ -179,6 +283,9 @@ class PromptManager:
 
 ## ASIL 等级
 {asil_level}
+
+## 本 ASIL 等级的 ISO 26262 Part 6 方法要求
+{asil_req}
 
 ## 源代码
 ```c
@@ -195,16 +302,9 @@ class PromptManager:
 描述软件整体架构风格（分层架构/组件架构/事件驱动等）、设计原则、架构约束。
 
 ## 2. 系统上下文图
-
-使用 Mermaid 绘制系统与外部实体的交互关系：
-```mermaid
-graph TB
-    系统 --> 外部实体A
-    系统 --> 外部实体B
-```
+使用 Mermaid 绘制系统与外部实体的交互关系。
 
 ## 3. 模块分解
-
 ### 3.1 模块列表
 | 模块ID | 模块名称 | 职责描述 | 关键函数 | ASIL等级 |
 |--------|---------|---------|---------|---------|
@@ -216,7 +316,6 @@ graph TB
 对每个模块描述其职责、接口、依赖关系和约束。
 
 ## 4. 组件接口规格
-
 ### 4.1 内部接口（模块间）
 | 接口ID | 提供方模块 | 消费方模块 | 接口类型 | 数据格式 | 触发条件 | 安全约束 |
 |--------|-----------|-----------|---------|---------|---------|---------|
@@ -249,6 +348,7 @@ graph TB
 使用 Mermaid 状态图描述正常→降级→安全状态的转换路径。
 ### 10.3 冗余设计
 软件多样性、N版本编程、投票机制等（如适用）。
+{safety_extra}
 
 ## 11. 架构决策记录（ADR）
 记录关键架构决策及其理由和替代方案。
@@ -256,18 +356,21 @@ graph TB
 请确保架构文档与代码实现严格对应，每个架构元素都能追溯到具体代码模块。"""
 
     # ------------------------------------------------------------------
-    # FMEA - 失效模式与影响分析
+    # FMEA - 失效模式与影响分析（#1 ASIL差异化 + #2 AI-AP）
     # ------------------------------------------------------------------
 
     def _build_fmea_prompt(self, code: str, module_name: str, asil_level: str) -> str:
-        """构建 FMEA 文档生成 Prompt"""
-        return f"""你是一名功能安全工程师，请根据以下 C/C++ 嵌入式代码，执行完整的**失效模式与影响分析（FMEA）**，符合 ISO 26262 Part 6 和 IEC 61508 标准。
+        asil_req = _get_asil_requirements(asil_level)
+        return f"""你是一名功能安全工程师，请根据以下 C/C++ 嵌入式代码，执行完整的**失效模式与影响分析（FMEA）**，符合 ISO 26262 Part 6/Part 9 和 IEC 61508 标准。
 
 ## 模块名称
 {module_name}
 
 ## ASIL 等级
 {asil_level}
+
+## 本 ASIL 等级的 ISO 26262 Part 6 方法要求
+{asil_req}
 
 ## 源代码
 ```c
@@ -281,7 +384,7 @@ graph TB
 # {module_name} 失效模式与影响分析（FMEA）
 
 ## 1. 分析范围与方法
-简述分析覆盖范围、使用标准、分析假设。
+简述分析覆盖范围、使用标准（ISO 26262:2018 / IEC 61508）、分析假设。
 
 ## 2. FMEA 分析表
 
@@ -304,30 +407,39 @@ graph TB
 
 每个维度的 FMEA 表格格式如下：
 
-| 失效模式ID | 失效模式 | 失效原因 | 失效影响 | 严重度(S) | 发生度(O) | 检测度(D) | RPN | AP | 现有控制措施 | 建议改进措施 |
-|-----------|----------|----------|----------|-----------|-----------|-----------|-----|----|------------|------------|
+| 失效模式ID | 失效模式 | 失效原因 | 失效影响 | 严重度(S) | 发生度(O) | 检测度(D) | RPN | AI-AP | 现有控制措施 | 建议改进措施 |
+|-----------|----------|----------|----------|-----------|-----------|-----------|-----|-------|------------|------------|
 
 评分标准：
 - **严重度(S)**：1-10（10=灾难性安全影响，1=无影响）
 - **发生度(O)**：1-10（10=极可能发生，1=几乎不可能）
 - **检测度(D)**：1-10（10=完全无法检测，1=必定能检测到）
 - **RPN** = S × O × D
-- **AP（行动优先级）**：高(RPN≥200) / 中(RPN≥100) / 低(RPN<100)
+{_AI_AP_TABLE}
 
 ## 3. 高风险失效模式汇总
-列出 RPN ≥ 100 的失效模式，按 RPN 降序排列。
+列出 AI-AP 为 H（高）以及 RPN ≥ 100 的失效模式，按 AI-AP 优先、RPN 降序排列。
 
 ## 4. 改进措施建议
-针对高风险失效模式提出具体的改进措施建议，包括设计改进和检测机制增强。
+针对高风险失效模式提出具体的改进措施建议，包括：
+- 设计改进（算法/架构层面）
+- 检测机制增强（运行时监控、自检）
+- 每项措施需标注预期降低的 S/O/D 值和改进后的 AI-AP
 
 请确保分析全面、深入，不遗漏任何潜在的失效模式。"""
 
     # ------------------------------------------------------------------
-    # SDD - 软件详细设计
+    # SDD - 软件详细设计（#1 ASIL差异化）
     # ------------------------------------------------------------------
 
     def _build_sdd_prompt(self, code: str, module_name: str, asil_level: str) -> str:
-        """构建 SDD 文档生成 Prompt"""
+        asil_req = _get_asil_requirements(asil_level)
+        wcet_extra = ""
+        if asil_level in ("ASIL C", "ASIL D"):
+            wcet_extra = """
+| WCET分析方法 | 使用的分析工具/方法（静态分析/测量法） |
+| 栈使用分析 | 最坏情况栈深度估算方法及结果 |"""
+
         return f"""你是一名功能安全工程师，请根据以下 C/C++ 嵌入式代码，撰写符合 ISO 26262 / ASPICE 标准的**软件详细设计文档（SDD）**。
 
 ## 模块名称
@@ -335,6 +447,9 @@ graph TB
 
 ## ASIL 等级
 {asil_level}
+
+## 本 ASIL 等级的 ISO 26262 Part 6 方法要求
+{asil_req}
 
 ## 源代码
 ```c
@@ -372,6 +487,7 @@ graph TB
 | 可重入性 | 是否可重入及原因 |
 | 副作用 | 对全局状态的影响 |
 | 错误处理 | 异常情况处理方式 |
+{wcet_extra}
 
 ### 2.2 外部接口
 硬件寄存器访问、外设通信接口、OS/RTOS 接口等。
@@ -403,14 +519,18 @@ graph TB
 ## 8. 安全设计
 防御性编程措施、故障检测机制、安全状态转换策略。
 
+## 9. MISRA C 合规性说明
+列出代码中已遵循的 MISRA C:2012 规则，以及任何偏差项和论证理由。
+
 请确保设计文档与代码实现严格对应，每个设计元素都能追溯到具体代码。"""
 
     # ------------------------------------------------------------------
-    # TC-UNIT - 单元测试用例
+    # TC-UNIT - 单元测试用例（#1 ASIL差异化 + #5 SWE.4 增强）
     # ------------------------------------------------------------------
 
     def _build_tc_unit_prompt(self, code: str, module_name: str, asil_level: str) -> str:
-        """构建单元测试用例文档生成 Prompt"""
+        asil_req = _get_asil_requirements(asil_level)
+        coverage_req = _get_asil_coverage(asil_level)
         return f"""你是一名功能安全测试工程师，请根据以下 C/C++ 嵌入式代码，设计完整的**单元测试用例文档（TC-UNIT）**，符合 ISO 26262 Part 6 软件单元测试要求和 ASPICE SWE.4 单元测试规范。
 
 ## 模块名称
@@ -418,6 +538,9 @@ graph TB
 
 ## ASIL 等级
 {asil_level}
+
+## 本 ASIL 等级的 ISO 26262 Part 6 方法要求
+{asil_req}
 
 ## 源代码
 ```c
@@ -431,7 +554,9 @@ graph TB
 # {module_name} 单元测试用例文档（TC-UNIT）
 
 ## 1. 测试策略
-简述单元测试方法、覆盖目标（MC/DC / 分支覆盖 / 语句覆盖）、测试环境假设（含 Mock/Stub 策略）。
+简述单元测试方法、覆盖目标、测试环境假设（含 Mock/Stub 策略）。
+- **覆盖率目标**：{coverage_req}
+- **测试框架**：Unity (C) / Google Test (C++)
 
 ## 2. 单元测试用例表
 
@@ -458,40 +583,64 @@ graph TB
 |-----------|---------|---------|---------|---------|---------|---------|--------|---------|
 
 要求：
-- **测试用例ID**：格式 UT-MOD-XXX（XXX为三位序号）
+- **测试用例ID**：格式 UT-MOD-XXX（XXX为三位序号，必须连续）
 - **优先级**：高(安全相关) / 中(功能正确性) / 低(边界/异常)
-- **追溯需求**：关联到 SRS 需求ID（可虚拟）
+- **追溯需求**：关联到 SRS 需求ID（格式 SRS-MOD-XXX）
 
-## 3. 单元测试代码
+## 3. 测试规程（Test Procedure）
+
+为每个高优先级测试用例提供详细的执行步骤：
+
+| 步骤编号 | 操作描述 | 预期观察 | 通过准则 |
+|---------|---------|---------|---------|
+
+## 4. 单元测试代码
 
 请为关键测试用例生成 Unity（C语言）和 Google Test（C++）两种框架的单元测试代码：
 
-### 3.1 Unity 框架测试代码
+### 4.1 Unity 框架测试代码
 ```c
 #include "unity.h"
-// ... 完整的 Unity 单元测试代码
+// ... 完整的 Unity 单元测试代码，含 setUp/tearDown
 ```
 
-### 3.2 Google Test 框架测试代码
+### 4.2 Google Test 框架测试代码
 ```cpp
 #include <gtest/gtest.h>
 // ... 完整的 GTest 单元测试代码
 ```
 
-## 4. 测试覆盖矩阵
-单元测试用例与函数的覆盖矩阵表。
+## 5. 测试覆盖矩阵
+单元测试用例与函数的覆盖矩阵表，标注每个函数被哪些用例覆盖。
 
-## 5. 测试通过准则
-各 ASIL 等级对应的单元测试覆盖率要求（MC/DC、分支、语句）、通过率要求。
+## 6. 测试结果记录模板
+
+提供测试结果记录表格，供实际测试执行时填写：
+
+| 测试用例ID | 执行日期 | 执行者 | 实际结果 | 通过/失败 | 备注/缺陷ID |
+|-----------|---------|--------|---------|----------|------------|
+
+## 7. 覆盖率分析报告模板
+
+| 覆盖类型 | 目标 | 实际值 | 是否达标 | 未覆盖项说明 |
+|---------|------|--------|---------|------------|
+| 语句覆盖 | 100% | | | |
+| 分支覆盖 | {coverage_req} | | | |
+{"| MC/DC覆盖 | ≥90% | | | |" if asil_level == "ASIL D" else ""}
+
+## 8. 测试通过准则
+- 所有高优先级用例必须 100% 通过
+- 覆盖率必须达到 {coverage_req}
+- 所有失败用例必须有对应的缺陷记录和修复计划
 
 请确保单元测试用例全面覆盖代码的所有分支和路径，特别关注安全相关的测试场景。"""
 
     # ------------------------------------------------------------------
-    # TC-INTEGRATION - 集成测试用例
+    # TC-INTEGRATION - 集成测试用例（#1 ASIL差异化）
     # ------------------------------------------------------------------
 
     def _build_tc_integration_prompt(self, code: str, module_name: str, asil_level: str) -> str:
-        """构建集成测试用例文档生成 Prompt"""
+        asil_req = _get_asil_requirements(asil_level)
         return f"""你是一名功能安全测试工程师，请根据以下 C/C++ 嵌入式代码，设计完整的**集成测试用例文档（TC-INTEGRATION）**，符合 ISO 26262 Part 6 软件集成测试要求和 ASPICE SWE.5 集成测试规范。
 
 ## 模块名称
@@ -499,6 +648,9 @@ graph TB
 
 ## ASIL 等级
 {asil_level}
+
+## 本 ASIL 等级的 ISO 26262 Part 6 方法要求
+{asil_req}
 
 ## 源代码
 ```c
@@ -515,10 +667,8 @@ graph TB
 简述集成测试方法（自顶向下 / 自底向上 / 三明治法）、测试环境假设（含硬件在环 HIL / 软件在环 SIL）、Mock/Stub 策略。
 
 ## 2. 接口分析
-
 ### 2.1 模块内部接口
 分析代码中各函数/子模块之间的调用关系和数据流，绘制接口调用图。
-
 ### 2.2 外部接口
 分析模块与外部系统（驱动层、中间件、总线通信）的接口依赖关系。
 
@@ -527,19 +677,10 @@ graph TB
 请使用以下测试设计技术设计集成测试用例：
 
 ### 3.1 接口调用链测试
-针对函数/模块之间的调用序列，验证数据传递、参数一致性、返回值处理。
-
 ### 3.2 数据流集成测试
-验证跨模块的数据流是否正确（共享变量、全局数据、消息队列、总线通信）。
-
 ### 3.3 控制流集成测试
-验证跨模块的控制流（中断处理、任务调度、状态同步、回调机制）。
-
 ### 3.4 时序与并发测试
-针对多任务/中断场景，设计时序竞争、死锁、优先级反转等测试用例。
-
 ### 3.5 故障注入集成测试
-在接口层注入故障（通信超时、数据损坏、设备无响应），验证系统级容错与安全状态转换。
 
 测试用例表格格式：
 
@@ -547,29 +688,23 @@ graph TB
 |-----------|---------|--------------|---------|---------|---------|---------|--------|---------|
 
 要求：
-- **测试用例ID**：格式 IT-MOD-XXX（XXX为三位序号）
+- **测试用例ID**：格式 IT-MOD-XXX（XXX为三位序号，必须连续）
 - **优先级**：高(安全相关) / 中(功能正确性) / 低(边界/异常)
-- **追溯需求**：关联到 SRS / SAD 需求ID（可虚拟）
+- **追溯需求**：关联到 SRS / SAD 需求ID
 
 ## 4. 集成测试代码框架
-
-请为关键集成测试用例生成测试代码示例：
-
 ### 4.1 使用 CMock/FFI 的集成测试代码
-```c
-// 包含 Mock/Stub 的集成测试代码示例
-```
-
 ### 4.2 使用 Google Mock 的集成测试代码
-```cpp
-#include <gmock/gmock.h>
-// 包含 Mock 对象的集成测试代码示例
-```
 
 ## 5. 测试覆盖矩阵
 集成测试用例与接口/调用链的覆盖矩阵表。
 
-## 6. 测试通过准则
+## 6. 测试结果记录模板
+
+| 测试用例ID | 执行日期 | 执行者 | 实际结果 | 通过/失败 | 备注/缺陷ID |
+|-----------|---------|--------|---------|----------|------------|
+
+## 7. 测试通过准则
 各 ASIL 等级对应的集成测试覆盖率要求、接口覆盖率要求、通过率要求。
 
 请确保集成测试用例全面覆盖模块间的所有接口和关键调用路径，特别关注安全相关的集成场景。"""
@@ -578,7 +713,6 @@ graph TB
     # 分段并发 & 审查修订
     # ------------------------------------------------------------------
 
-    # 每种文档类型的章节定义（用于分段并发生成）
     DOC_CHUNKS = {
         "SRS": [
             {"id": 1, "title": "第1~3章", "sections": "1. 引言（目的、范围、术语）、2. 系统概述、3. 功能需求"},
@@ -591,20 +725,23 @@ graph TB
             {"id": 3, "title": "第7~9章", "sections": "7. 通信架构、8. 中断与任务调度、9. 内存架构"},
         ],
         "FMEA": [
-            {"id": 1, "title": "第1~3章", "sections": "1. 分析范围、2. 系统框图、3. 功能清单"},
-            {"id": 2, "title": "第4章", "sections": "4. FMEA 分析表（核心）"},
+            {"id": 1, "title": "第1~4章", "sections": "1. 文档信息、2. 审批记录、3. 分析范围与目的、4. 风险优先级定义（S/O/D/RPN 准则表）"},
+            {"id": 2, "title": "第5章", "sections": "5. 失效模式分析表（核心：逐函数/模块识别失效模式、影响、S/O/D 评分、RPN 计算）"},
+            {"id": 3, "title": "第6~8章", "sections": "6. 现有检测与预防措施、7. 建议纠正措施、8. 安全机制覆盖分析"},
+            {"id": 4, "title": "第9~10章", "sections": "9. 残余风险评估、10. 追溯矩阵（失效模式→安全需求→测试用例映射）"},
         ],
         "SDD": [
             {"id": 1, "title": "第1~3章", "sections": "1. 设计概述、2. 架构设计、3. 接口设计"},
             {"id": 2, "title": "第4~6章", "sections": "4. 详细设计、5. 数据结构设计、6. 算法设计"},
         ],
         "TC-UNIT": [
-            {"id": 1, "title": "第1~3章", "sections": "1. 测试策略、2. 单元测试用例表（等价类/边界值/错误猜测/状态转换/安全机制）、3. 单元测试代码"},
-            {"id": 2, "title": "第4~5章", "sections": "4. 测试覆盖矩阵、5. 测试通过准则"},
+            {"id": 1, "title": "第1~3章", "sections": "1. 测试策略、2. 单元测试用例表（等价类/边界值/错误猜测/状态转换/安全机制）、3. 测试规程"},
+            {"id": 2, "title": "第4~6章", "sections": "4. 单元测试代码、5. 测试覆盖矩阵、6. 测试结果记录模板"},
+            {"id": 3, "title": "第7~8章", "sections": "7. 覆盖率分析报告模板、8. 测试通过准则"},
         ],
         "TC-INTEGRATION": [
-            {"id": 1, "title": "第1~3章", "sections": "1. 集成测试策略、2. 接口分析（内部接口/外部接口）、3. 集成测试用例表（调用链/数据流/控制流/时序/故障注入）"},
-            {"id": 2, "title": "第4~6章", "sections": "4. 集成测试代码框架、5. 测试覆盖矩阵、6. 测试通过准则"},
+            {"id": 1, "title": "第1~3章", "sections": "1. 集成测试策略、2. 接口分析（内部接口/外部接口）、3. 集成测试用例表"},
+            {"id": 2, "title": "第4~6章", "sections": "4. 集成测试代码框架、5. 测试覆盖矩阵、6. 测试结果记录模板"},
         ],
     }
 
@@ -615,30 +752,25 @@ graph TB
         context: Optional[Dict[str, Any]] = None,
         custom_template: Optional[str] = None,
     ) -> list:
-        """
-        获取分段并发生成的子 Prompt 列表。
-        每个 chunk 是一个独立的生成任务，可并行执行后拼接。
-
-        Returns:
-            list of (chunk_title, prompt_text) 元组
-        """
         ctx = context or {}
         module_name = ctx.get("module_name", "目标模块")
         asil_level = ctx.get("asil_level", "ASIL B")
 
         chunks = self.DOC_CHUNKS.get(doc_type.upper(), [])
         if not chunks:
-            # 无预定义分段时，返回单段（等同于不分段）
             full_prompt = self.get_prompt(doc_type, code, context, custom_template)
             return [(doc_type, full_prompt)]
 
         results = []
+        prior_docs = ctx.get("prior_docs")
         for chunk in chunks:
             chunk_prompt = self._build_chunk_prompt(
                 doc_type, code, module_name, asil_level,
                 chunk["id"], chunk["title"], chunk["sections"],
                 total_chunks=len(chunks),
             )
+            if prior_docs:
+                chunk_prompt = self._inject_prior_docs(chunk_prompt, prior_docs)
             if custom_template:
                 chunk_prompt = self._apply_custom_template(chunk_prompt, custom_template)
             results.append((chunk["title"], chunk_prompt))
@@ -649,7 +781,7 @@ graph TB
         self, doc_type: str, code: str, module_name: str, asil_level: str,
         chunk_id: int, chunk_title: str, sections: str, total_chunks: int,
     ) -> str:
-        """构建单个分段的 Prompt。"""
+        asil_req = _get_asil_requirements(asil_level)
         doc_full_names = {
             "SRS": "软件需求规格说明",
             "SAD": "软件架构设计",
@@ -668,6 +800,9 @@ graph TB
 - 本文档共分 {total_chunks} 个部分并行生成，你负责第 {chunk_id} 部分：{sections}
 - 请只输出你负责的章节内容，不要输出文档标题和其他章节
 
+## 本 ASIL 等级的 ISO 26262 方法要求
+{asil_req}
+
 ## 源代码
 ```c
 {code}
@@ -684,12 +819,10 @@ graph TB
 - 确保内容与源代码严格对应，不编造不存在的功能"""
 
     def get_review_prompt(self, doc_type: str, generated_doc: str, code: str, context: Optional[Dict[str, Any]] = None) -> str:
-        """
-        构建审查修订 Prompt。将已生成的文档交给第二个模型审查修正。
-        """
         ctx = context or {}
         module_name = ctx.get("module_name", "目标模块")
         asil_level = ctx.get("asil_level", "ASIL B")
+        asil_req = _get_asil_requirements(asil_level)
 
         doc_full_names = {
             "SRS": "软件需求规格说明",
@@ -706,6 +839,9 @@ graph TB
 ## 审查背景
 - 模块名称：{module_name}
 - ASIL 等级：{asil_level}
+
+## 本 ASIL 等级的 ISO 26262 方法要求
+{asil_req}
 
 ## 待审查的文档
 {generated_doc}
@@ -728,6 +864,7 @@ graph TB
 - 是否有遗漏的关键功能或安全机制
 - 是否覆盖了所有重要的函数和模块
 - 表格是否完整（无空行、无缺失列）
+- 需求ID/测试用例ID编号是否连续、无重复
 
 ### 3. 一致性审查
 - 术语使用是否前后一致
@@ -735,11 +872,15 @@ graph TB
 - 交叉引用是否正确
 
 ### 4. ISO 26262 合规性审查
-- {asil_level} 等级对应的要求是否满足
+- {asil_level} 等级对应的要求是否满足（参照上方方法要求）
 - 安全机制描述是否充分
 - 是否缺少必要的安全相关章节
 
-### 5. 修订规则
+### 5. 追溯性审查
+- 需求→代码→测试的双向追溯是否完整
+- 追溯矩阵中是否有未覆盖项
+
+### 6. 修订规则
 - 保留原文档的正确部分，只修改有问题的部分
 - 对每处修改用 `<!-- 修订: 原因 -->` 注释标注修改理由
 - 如果原文档质量已经很高，不需要刻意修改
@@ -754,6 +895,7 @@ graph TB
 | 准确性 | ✅/⚠️/❌ | X 处 |
 | 完整性 | ✅/⚠️/❌ | X 处 |
 | 一致性 | ✅/⚠️/❌ | X 处 |
-| 合规性 | ✅/⚠️/❌ | X 处 |
+| 合规性 | ✅/️/❌ | X 处 |
+| 追溯性 | ✅/⚠️/ | X 处 |
 
 **总体评价**：[简要总结文档质量和主要修订内容]"""
