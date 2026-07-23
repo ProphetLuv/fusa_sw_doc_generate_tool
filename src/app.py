@@ -355,13 +355,6 @@ def _render_manual_mode():
         "ASIL C": 0.10,
         "ASIL D": 0.05,
     }
-    _TOKEN_HINT = {
-        "QM":     "QM 文档较简略，推荐 4096~8192",
-        "ASIL A": "推荐 8192~12288",
-        "ASIL B": "推荐 8192~16384",
-        "ASIL C": "文档详细，推荐 12288~20480",
-        "ASIL D": "最详尽，推荐 16384~32768",
-    }
     _TEMP_HINT = {
         "QM":     "可适当提高创造性（0.3~0.5）",
         "ASIL A": "建议 0.2~0.3",
@@ -376,16 +369,10 @@ def _render_manual_mode():
         st.session_state._auto_tokens = _TOKEN_DEFAULT.get(asil_level, 8192)
         st.session_state._auto_temp = _TEMP_DEFAULT.get(asil_level, 0.20)
 
-    token_hint = _TOKEN_HINT.get(asil_level, "")
-    temp_hint = _TEMP_HINT.get(asil_level, "")
+    # max_tokens 随 ASIL 自动设定，不做独立滑块（各 Agent 可在内部单独调整）
+    max_tokens = st.session_state.get("_auto_tokens", _TOKEN_DEFAULT.get(asil_level, 8192))
 
-    max_tokens = st.sidebar.slider(
-        "Max Tokens",
-        min_value=1024, max_value=32768,
-        value=st.session_state.get("_auto_tokens", 8192), step=1024,
-        help="单次生成最大 token 数。值越大文档越长，截断时请增大此值或启用分段并发生成。"
-    )
-    st.sidebar.caption(f"💡 {token_hint}")
+    temp_hint = _TEMP_HINT.get(asil_level, "")
 
     temperature = st.sidebar.slider(
         "Temperature",
@@ -394,6 +381,7 @@ def _render_manual_mode():
         help="输出随机性。0=完全确定，0.2=推荐值，0.5+=创造性增强（需求文档不建议）。"
     )
     st.sidebar.caption(f"💡 {temp_hint}")
+    st.sidebar.info("💡 Max Tokens 随 ASIL 等级自动设定（当前: {}）。各 Agent 可在「生成选项」中单独微调。".format(max_tokens))
 
     # 合并主 Key + 额外 Key 池
     all_keys = [api_key] + extra_keys if api_key else extra_keys
@@ -569,9 +557,16 @@ def _render_dashboard(config: dict):
 def _batch_generate_all(config: dict):
     """按 SRS→SAD→FMEA→SDD→TC-UNIT→TC-INTEGRATION 顺序批量生成全部文档。"""
     order = ["SRS", "SAD", "FMEA", "SDD", "TC-UNIT", "TC-INTEGRATION"]
-    _AGENT_TOKEN_DEFAULT = {
+    # ASIL 自适应：根据 ASIL 等级缩放各 Agent 推荐 token 数
+    _ASIL_BASE = {"QM": 4096, "ASIL A": 8192, "ASIL B": 8192, "ASIL C": 12288, "ASIL D": 16384}
+    _AGENT_TOKEN_DEFAULT_B = {
         "SRS": 8192, "SAD": 12288, "FMEA": 16384,
         "SDD": 12288, "TC-UNIT": 12288, "TC-INTEGRATION": 12288,
+    }
+    _scale = _ASIL_BASE.get(config.get("asil_level", "ASIL B"), 8192) / 8192
+    _AGENT_TOKEN_DEFAULT = {
+        k: max(1024, int(v * _scale / 1024) * 1024)
+        for k, v in _AGENT_TOKEN_DEFAULT_B.items()
     }
     code = st.session_state.shared_code
     prompt_mgr = PromptManager()
@@ -611,9 +606,8 @@ def _batch_generate_all(config: dict):
                 ctx["prior_docs"] = prior
 
         container = st.empty()
-        # 每个 Agent 使用独立的 max_tokens，但不超过全局上限
-        _global_max = config.get("max_tokens", 8192)
-        engine.max_tokens = min(_AGENT_TOKEN_DEFAULT.get(agent_type, _global_max), _global_max)
+        # 每个 Agent 使用独立的推荐 max_tokens（批量生成使用各 Agent 最佳值，确保文档质量）
+        engine.max_tokens = _AGENT_TOKEN_DEFAULT.get(agent_type, config.get("max_tokens", 8192))
         text = _generate_single_doc(engine, prompt_mgr, agent_type, code, ctx, st.session_state.agent_templates.get(agent_type), container)
         st.session_state.generated_docs[agent_type] = text
 
@@ -713,13 +707,22 @@ def _render_agent_workspace(agent_type: str, config: dict):
         else:
             st.success("🔗 **FMEA 前置上下文**: " + " | ".join(prior_info) + " — 将自动注入生成")
 
-    # ── 生成选项（折叠面板）──
-    # 每个 Agent 的推荐 Max Tokens
-    _AGENT_TOKEN_DEFAULT = {
+    # ── 生成选项（默认展开）──
+    # ASIL 等级对应的全局基准 token 数
+    _ASIL_BASE_TOKENS = {"QM": 4096, "ASIL A": 8192, "ASIL B": 8192, "ASIL C": 12288, "ASIL D": 16384}
+    # 每个 Agent 在 ASIL B 下的推荐 Max Tokens
+    _AGENT_TOKEN_DEFAULT_B = {
         "SRS": 8192, "SAD": 12288, "FMEA": 16384,
         "SDD": 12288, "TC-UNIT": 12288, "TC-INTEGRATION": 12288,
     }
-    with st.expander("⚙️ 生成选项", expanded=False):
+    # 根据 ASIL 等级缩放 Agent 推荐值（QM 缩小，ASIL C/D 放大）
+    _asil_level = config.get("asil_level", "ASIL B")
+    _asil_scale = _ASIL_BASE_TOKENS.get(_asil_level, 8192) / 8192
+    _AGENT_TOKEN_DEFAULT = {
+        k: max(1024, int(v * _asil_scale / 1024) * 1024)
+        for k, v in _AGENT_TOKEN_DEFAULT_B.items()
+    }
+    with st.expander("⚙️ 生成选项", expanded=True):
         opt_col1, opt_col2, opt_col3 = st.columns(3)
         with opt_col1:
             chunked_mode = st.checkbox("📑 分段并发生成", value=False,
@@ -730,14 +733,12 @@ def _render_agent_workspace(agent_type: str, config: dict):
                                        help="生成后由第二个模型审查修正",
                                        key=f"review_{agent_type}")
         with opt_col3:
-            _global_max = config.get("max_tokens", 8192)
-            _agent_default = min(_AGENT_TOKEN_DEFAULT.get(agent_type, _global_max), _global_max)
             agent_max_tokens = st.number_input(
-                "📏 Max Tokens", min_value=1024, max_value=_global_max,
-                value=_agent_default,
+                "📏 Max Tokens", min_value=1024, max_value=65536,
+                value=_AGENT_TOKEN_DEFAULT.get(agent_type, 8192),
                 step=1024,
-                help=f"当前 Agent 单次生成最大 token 数（全局上限: {_global_max}）。"
-                     f"此值不可超过侧边栏设置的全局上限。文档被截断时请增大全局值后再调整。",
+                help=f"当前 Agent 单次生成最大 token 数（{_asil_level} 推荐值: {_AGENT_TOKEN_DEFAULT.get(agent_type, 8192)}）。"
+                     f"文档被截断时请增大此值。",
                 key=f"max_tokens_{agent_type}",
             )
 
