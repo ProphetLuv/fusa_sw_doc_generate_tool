@@ -509,7 +509,7 @@ def _render_dashboard(config: dict):
                 <div style="text-align: center;">
                     <div style="font-size: 0.7rem;
                                 padding: 3px 10px; border-radius: 10px; display: inline-block;
-                                background: {'rgba(255,255,255,0.4)' if done else 'rgba(0,0,0,0.25)'};
+                                background: {'rgba(255,255,255,0.4)' if done else 'rgba(255,255,255,0.12)'};
                                 color: {'#1a1a2e' if done else 'rgba(255,255,255,0.95)'};
                                 font-weight: {'600' if done else 'normal'};">
                         {'✅ 已生成' if done else '⏳ 未生成'}
@@ -611,8 +611,9 @@ def _batch_generate_all(config: dict):
                 ctx["prior_docs"] = prior
 
         container = st.empty()
-        # 每个 Agent 使用独立的 max_tokens
-        engine.max_tokens = _AGENT_TOKEN_DEFAULT.get(agent_type, config.get("max_tokens", 8192))
+        # 每个 Agent 使用独立的 max_tokens，但不超过全局上限
+        _global_max = config.get("max_tokens", 8192)
+        engine.max_tokens = min(_AGENT_TOKEN_DEFAULT.get(agent_type, _global_max), _global_max)
         text = _generate_single_doc(engine, prompt_mgr, agent_type, code, ctx, st.session_state.agent_templates.get(agent_type), container)
         st.session_state.generated_docs[agent_type] = text
 
@@ -729,12 +730,14 @@ def _render_agent_workspace(agent_type: str, config: dict):
                                        help="生成后由第二个模型审查修正",
                                        key=f"review_{agent_type}")
         with opt_col3:
+            _global_max = config.get("max_tokens", 8192)
+            _agent_default = min(_AGENT_TOKEN_DEFAULT.get(agent_type, _global_max), _global_max)
             agent_max_tokens = st.number_input(
-                "📏 Max Tokens", min_value=1024, max_value=65536,
-                value=_AGENT_TOKEN_DEFAULT.get(agent_type, config.get("max_tokens", 8192)),
+                "📏 Max Tokens", min_value=1024, max_value=_global_max,
+                value=_agent_default,
                 step=1024,
-                help=f"当前 Agent 单次生成最大 token 数（全局值: {config.get('max_tokens', 8192)}）。"
-                     f"文档被截断时请增大此值。",
+                help=f"当前 Agent 单次生成最大 token 数（全局上限: {_global_max}）。"
+                     f"此值不可超过侧边栏设置的全局上限。文档被截断时请增大全局值后再调整。",
                 key=f"max_tokens_{agent_type}",
             )
 
