@@ -19,22 +19,22 @@
 ## 系统要求
 
 - Windows 10 / 11
-- Python ≥ 3.13（基于 `requirements.txt` 配置虚拟环境）
+- Python ≥ 3.10（推荐 3.13，需勾选 *Add python.exe to PATH*）
 - 现代浏览器（Chrome / Edge / Firefox）
 
 ## 快速开始
 
-### 1. 配置 Python 环境
+### 一键启动（推荐）
 
-```powershell
-cd fusa_sw_doc_generate_tool
-python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt
-```
+双击 `启动工具.bat`，脚本会自动完成全部环境准备：
 
-### 2. 启动程序
+1. **检测系统 Python**：自动识别 `python` / `py` 命令，校验版本 ≥ 3.10；未安装时给出下载指引
+2. **创建虚拟环境**：首次运行自动在项目目录创建 `.venv`
+3. **安装依赖**：自动安装 `requirements.txt` 中的依赖包；默认源失败时自动切换清华镜像源重试
+4. **依赖自检**：每次启动前检查依赖完整性，缺失时自动补装
+5. **启动服务**：自动选择可用端口（8501~8510）并启动
 
-双击 `启动工具.bat`，等待命令行显示：
+等待命令行显示：
 
 ```
 Uvicorn server started on :::8501
@@ -42,9 +42,21 @@ Uvicorn server started on :::8501
 
 然后在浏览器打开 [http://localhost:8501](http://localhost:8501)。
 
+> 首次启动需下载依赖包，约需 3~5 分钟；之后每次启动仅需数秒。
 > 若 8501 端口被占用，程序会自动尝试 8502~8510 端口，并在命令行显示实际地址。
 
-### 3. 使用
+### 手动配置环境（可选）
+
+如需自行管理 Python 环境：
+
+```powershell
+cd fusa_sw_doc_generate_tool
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\python -m streamlit run src\app.py
+```
+
+### 使用
 
 1. 在侧边栏选择**模型提供商**并输入 **API Key**
 2. 上传 C/C++ 代码文件
@@ -94,6 +106,12 @@ Uvicorn server started on :::8501
 
 ## 常见问题
 
+**Q: 双击启动脚本提示「未检测到 Python」？**
+本机未安装 Python 或未加入 PATH。请前往 [python.org](https://www.python.org/downloads/) 下载安装，安装时务必勾选 **Add python.exe to PATH**，完成后重新双击 `启动工具.bat`。
+
+**Q: 依赖安装失败？**
+脚本会先用默认源安装，失败后自动切换清华镜像源重试。若仍失败，请检查网络连接（如公司代理），然后重新运行 `启动工具.bat`，脚本会自动续装缺失的依赖。
+
 **Q: 浏览器没有自动打开？**
 手动在浏览器地址栏输入 `http://localhost:8501`
 
@@ -137,7 +155,7 @@ fusa_sw_doc_generate_tool/
 │   ├── doc_exporter.py     # 文档导出（Word / Excel）
 │   └── template_parser.py  # 自定义模板解析
 ├── requirements.txt        # Python 依赖
-└── 启动工具.bat            # 一键启动脚本
+└── 启动工具.bat            # 一键启动脚本（自动装环境 + 装依赖 + 启动）
 ```
 
 ## License
