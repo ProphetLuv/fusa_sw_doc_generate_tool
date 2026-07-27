@@ -88,7 +88,7 @@ def _render_dashboard(config: dict):
             else:
                 st.markdown('<div style="text-align: center; margin: 6px 0 2px 0;">'
                             '<span style="font-size: 0.72rem; padding: 3px 10px; border-radius: 10px;'
-                            ' background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.45);">'
+                            ' background: rgba(158,158,158,0.15); color: #757575; font-weight: 500;">'
                             '⏳ 未生成</span></div>', unsafe_allow_html=True)
 
             btn_label = "📂 打开" if not done else "📂 查看 / 重新生成"

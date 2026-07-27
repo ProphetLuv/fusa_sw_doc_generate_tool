@@ -206,10 +206,33 @@ def _render_agent_workspace(agent_type: str, config: dict):
     from app.app_results import _render_agent_result
     _render_agent_result(agent_type, config)
 
+    # ── 持久展示上次生成的 Token 消耗 ──
+    if st.session_state.get(f"token_usage_{agent_type}"):
+        st.markdown("---")
+        _render_token_usage(agent_type)
+
 
 # ======================================================================
 # 代码状态栏（轻量提示，上传在 Dashboard 管理）
 # ======================================================================
+
+def _render_token_usage(agent_type: str):
+    """展示当前 Agent 最近一次生成的实际 Token 消耗。"""
+    usage = st.session_state.get(f"token_usage_{agent_type}")
+    if not usage:
+        return
+    tag = "实际" if usage.get("is_actual") else "估算"
+    st.metric(
+        label=f"📊 {agent_type} Token 消耗（{tag}）",
+        value=f"{usage['total_tokens']:,}",
+        delta=f"耗时 {usage['duration_sec']}s",
+        delta_color="off",
+    )
+    st.caption(
+        f"输入 {usage['prompt_tokens']:,} + 输出 {usage['completion_tokens']:,} "
+        f"| {usage['provider']} / {usage['model']}"
+    )
+
 
 def _render_code_status_bar() -> str:
     """在 Agent 工作区显示代码加载状态（紧凑单行），返回活动模块代码。"""
@@ -320,6 +343,9 @@ def _run_single_agent_generation(agent_type, code, config, chunked_mode, review_
             chunk_results = [None] * len(chunks)
             # 线程安全锁：串行化对 Streamlit 容器的写入
             _container_lock = threading.Lock()
+            # Token 用量累计器（线程安全）
+            _usage_lock = threading.Lock()
+            _chunk_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
             def _worker(ci, _, cprompt):
                 chunk_engine = engine_pool[ci % len(engine_pool)]
@@ -333,6 +359,13 @@ def _run_single_agent_generation(agent_type, code, config, chunked_mode, review_
                     text = f"生成失败: {e}"
                 with _container_lock:
                     containers[ci].markdown(text)
+                # 累计本次调用的实际 Token 用量
+                u = getattr(chunk_engine, "last_usage", None) or {}
+                if u.get("total_tokens", 0) > 0:
+                    with _usage_lock:
+                        _chunk_usage["prompt_tokens"] += u["prompt_tokens"]
+                        _chunk_usage["completion_tokens"] += u["completion_tokens"]
+                        _chunk_usage["total_tokens"] += u["total_tokens"]
                 return ci, text
 
             with ThreadPoolExecutor(max_workers=min(len(chunks), 8)) as executor:
@@ -363,6 +396,25 @@ def _run_single_agent_generation(agent_type, code, config, chunked_mode, review_
                         status.success("✅ 一致性合并审查完成")
                 except Exception as e:
                     status.warning(f"⚠️ 一致性合并审查失败（保留原始拼接结果）: {e}")
+
+            # 合并审查步骤的 Token 也累加
+            merge_usage = getattr(engine, "last_usage", None) or {}
+            if merge_usage.get("total_tokens", 0) > 0:
+                _chunk_usage["prompt_tokens"] += merge_usage["prompt_tokens"]
+                _chunk_usage["completion_tokens"] += merge_usage["completion_tokens"]
+                _chunk_usage["total_tokens"] += merge_usage["total_tokens"]
+
+            # 存储分段模式的累计 Token 用量
+            if _chunk_usage["total_tokens"] > 0:
+                st.session_state[f"token_usage_{agent_type}"] = {
+                    "prompt_tokens": _chunk_usage["prompt_tokens"],
+                    "completion_tokens": _chunk_usage["completion_tokens"],
+                    "total_tokens": _chunk_usage["total_tokens"],
+                    "duration_sec": 0,  # 分段模式耗时在下方统一计算
+                    "provider": engine.provider,
+                    "model": engine.model,
+                    "is_actual": True,
+                }
 
             result_container.empty()
         else:
@@ -442,3 +494,6 @@ def _run_single_agent_generation(agent_type, code, config, chunked_mode, review_
         _persist()
 
     status.success(f"✅ {agent_type} 文档生成完成！")
+
+    # ── 显示实际 Token 消耗 ──
+    _render_token_usage(agent_type)

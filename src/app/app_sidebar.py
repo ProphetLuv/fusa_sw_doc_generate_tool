@@ -158,20 +158,13 @@ def _render_json_mode(template: str):
         st.session_state.json_config = {}
         st.rerun()
 
-    # ── 项目信息 + 高级选项（与手动模式共用面板）──
-    module_name, asil_level, max_tokens, temperature = _render_project_settings()
-
-    # ── 配置导出（API Key 脱敏）──
+    # ── 导出当前 LLM 配置（API Key 脱敏）──
     masked_key = _mask_api_key(cfg.get("api_key", "")) if cfg.get("api_key") else ""
     export_cfg = {
         "provider": provider,
         "api_key": masked_key,
         "api_base": cfg.get("api_base") or "",
         "model": cfg.get("model") or DEFAULT_MODELS.get(provider, "gpt-4o"),
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-        "module_name": module_name,
-        "asil_level": asil_level,
     }
     st.sidebar.download_button(
         "💾 导出当前 LLM 配置为 JSON",
@@ -179,6 +172,9 @@ def _render_json_mode(template: str):
         file_name="llm_config.json", mime="application/json",
         use_container_width=True, key="export_config_btn",
     )
+
+    # ── 项目信息 + 高级选项（与手动模式共用面板）──
+    module_name, asil_level, max_tokens, temperature = _render_project_settings()
 
     json_api_keys = cfg.get("api_keys", [])
     if isinstance(json_api_keys, str):
@@ -359,20 +355,13 @@ def _render_manual_mode():
             st.session_state.cfg_extra_keys = ""
             st.rerun()
 
-    # ── 项目信息 + 高级选项（与 JSON 模式共用面板）──
-    module_name, asil_level, max_tokens, temperature = _render_project_settings()
-
-    # ── 配置导出（所有参数已就绪后导出）──
+    # ── 导出当前 LLM 配置 ──
     masked_key = _mask_api_key(api_key) if api_key.strip() else ""
     export_cfg = {
         "provider": provider,
         "api_key": masked_key,
         "api_base": api_base or "",
         "model": model or default_model,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-        "module_name": module_name,
-        "asil_level": asil_level,
     }
     st.sidebar.download_button(
         "💾 导出当前 LLM 配置为 JSON",
@@ -380,6 +369,9 @@ def _render_manual_mode():
         file_name="llm_config.json", mime="application/json",
         use_container_width=True, key="export_config_btn",
     )
+
+    # ── 项目信息 + 高级选项（与 JSON 模式共用面板）──
+    module_name, asil_level, max_tokens, temperature = _render_project_settings()
 
     # 合并主 Key + 额外 Key 池（过滤空白 Key）
     all_keys = ([api_key] + extra_keys) if api_key.strip() else extra_keys

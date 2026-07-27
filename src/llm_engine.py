@@ -100,6 +100,9 @@ class LLMEngine:
         self._openai_client = None
         self._anthropic_client = None
 
+        # 最近一次生成的实际 Token 用量（由 API 返回）
+        self.last_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
     def _get_openai_client(self):
         """获取或创建 OpenAI 兼容客户端（复用连接池）。"""
         if self._openai_client is None:
@@ -178,11 +181,19 @@ class LLMEngine:
             max_tokens=self.max_tokens,
             temperature=self.temperature,
             stream=True,
+            stream_options={"include_usage": True},
         )
 
         for chunk in stream:
             if _time.time() - start > self.timeout:
                 raise TimeoutError(f"生成超时（>{self.timeout}s）")
+            # 捕获最后一个 chunk 中的 usage 信息
+            if hasattr(chunk, "usage") and chunk.usage:
+                self.last_usage = {
+                    "prompt_tokens": chunk.usage.prompt_tokens or 0,
+                    "completion_tokens": chunk.usage.completion_tokens or 0,
+                    "total_tokens": chunk.usage.total_tokens or 0,
+                }
             # 部分兼容接口可能返回空 choices
             if chunk.choices and len(chunk.choices) > 0:
                 delta = chunk.choices[0].delta
@@ -208,6 +219,17 @@ class LLMEngine:
                 if _time.time() - start > self.timeout:
                     raise TimeoutError(f"生成超时（>{self.timeout}s）")
                 yield text
+            # 流结束后获取最终消息中的 usage
+            try:
+                final_msg = stream.get_final_message()
+                if final_msg and final_msg.usage:
+                    self.last_usage = {
+                        "prompt_tokens": final_msg.usage.input_tokens or 0,
+                        "completion_tokens": final_msg.usage.output_tokens or 0,
+                        "total_tokens": (final_msg.usage.input_tokens or 0) + (final_msg.usage.output_tokens or 0),
+                    }
+            except Exception:
+                pass  # 部分版本不支持，静默跳过
 
 
 # ======================================================================

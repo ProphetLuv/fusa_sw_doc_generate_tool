@@ -444,18 +444,45 @@ def _generate_single_doc(engine, prompt_mgr, doc_type, code, context, custom_tem
         if st.session_state.last_failed_agent == doc_type:
             st.session_state.last_failed_agent = None
 
-    # 写入日志
+    # 写入日志（优先使用 API 返回的实际用量，否则回退到估算）
+    actual_usage = getattr(engine, "last_usage", None) or {}
+    real_prompt = actual_usage.get("prompt_tokens", 0)
+    real_output = actual_usage.get("completion_tokens", 0)
     _log_generation(
         doc_type=doc_type,
         module_name=context.get("module_name", "目标模块"),
         provider=engine.provider,
         model=engine.model,
-        prompt_tokens=estimate_tokens(prompt),
-        output_tokens=estimate_tokens(full_text),
+        prompt_tokens=real_prompt if real_prompt > 0 else estimate_tokens(prompt),
+        output_tokens=real_output if real_output > 0 else estimate_tokens(full_text),
         duration=duration,
         success=not error_msg,
         error=error_msg,
     )
+
+    # 将实际 Token 用量存入 session_state，供 Agent 工作区展示
+    if actual_usage.get("total_tokens", 0) > 0:
+        st.session_state[f"token_usage_{doc_type}"] = {
+            "prompt_tokens": actual_usage["prompt_tokens"],
+            "completion_tokens": actual_usage["completion_tokens"],
+            "total_tokens": actual_usage["total_tokens"],
+            "duration_sec": round(duration, 1),
+            "provider": engine.provider,
+            "model": engine.model,
+            "is_actual": True,
+        }
+    else:
+        # API 未返回用量时用估算值兜底
+        st.session_state[f"token_usage_{doc_type}"] = {
+            "prompt_tokens": estimate_tokens(prompt),
+            "completion_tokens": estimate_tokens(full_text),
+            "total_tokens": estimate_tokens(prompt) + estimate_tokens(full_text),
+            "duration_sec": round(duration, 1),
+            "provider": engine.provider,
+            "model": engine.model,
+            "is_actual": False,
+        }
+
     return full_text
 
 
