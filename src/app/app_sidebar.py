@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 app_sidebar.py — 侧边栏配置面板（手动填写 / JSON 导入、模板上传）。
+所有配置值持久化在 session_state 中，切换配置模式不丢失。
 """
 
 import streamlit as st
@@ -40,9 +41,43 @@ _TEMP_HINT = {
     "ASIL D": "建议 0.0~0.1，最高确定性",
 }
 
+# session_state 中持久化配置的 key 前缀
+_CFG_KEYS = {
+    "provider": "cfg_provider",
+    "api_key": "cfg_api_key",
+    "api_base": "cfg_api_base",
+    "model": "cfg_model",
+    "extra_keys": "cfg_extra_keys",
+    "module_name": "cfg_module_name",
+    "asil_level": "cfg_asil_level",
+    "temperature": "cfg_temperature",
+}
+
+
+def _init_cfg_state():
+    """初始化配置持久化 session_state（仅首次）。"""
+    defaults = {
+        "cfg_provider": "openai",
+        "cfg_api_key": "",
+        "cfg_api_base": "",
+        "cfg_model": "",
+        "cfg_extra_keys": "",
+        "cfg_module_name": "目标模块",
+        "cfg_asil_level": "ASIL B",
+        "cfg_temperature": 0.15,
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+    # 记录当前 provider，用于检测切换
+    if "_last_provider" not in st.session_state:
+        st.session_state._last_provider = st.session_state.cfg_provider
+
 
 def render_sidebar():
     """渲染侧边栏：共享配置面板（模型 / API Key / ASIL / 模板）。"""
+    _init_cfg_state()
+
     st.sidebar.markdown("### ⚙️ 配置面板")
 
     config_mode = st.sidebar.radio(
@@ -79,7 +114,6 @@ def _render_json_mode(template: str):
         try:
             raw = uploaded.read().decode("utf-8")
             full_cfg = json.loads(raw)
-            # 仅保留 API 连接相关字段，其余参数由用户在面板中配置
             cfg = {
                 "provider": full_cfg.get("provider", "openai"),
                 "api_key": full_cfg.get("api_key", ""),
@@ -102,7 +136,14 @@ def _render_json_mode(template: str):
         st.sidebar.code(template, language="json")
         st.sidebar.caption("复制上方模板，修改后保存为 .json 文件上传。\n"
                            "模块名称、ASIL 等级、Temperature 等参数在下方面板中配置。")
-        return _empty_config()
+        # 即使未导入 JSON，项目信息/高级选项仍可配置
+        module_name, asil_level, max_tokens, temperature = _render_project_settings()
+        return {
+            "provider": "openai", "api_key": "", "api_base": None,
+            "model": "gpt-4o", "max_tokens": max_tokens,
+            "temperature": temperature, "module_name": module_name,
+            "asil_level": asil_level, "api_keys": [],
+        }
 
     st.sidebar.markdown("---")
     st.sidebar.markdown("##### 📋 已加载配置")
@@ -139,7 +180,6 @@ def _render_json_mode(template: str):
         use_container_width=True, key="export_config_btn",
     )
 
-    # 支持 JSON 中的 api_keys 数组（多 Key 并发）
     json_api_keys = cfg.get("api_keys", [])
     if isinstance(json_api_keys, str):
         json_api_keys = [k.strip() for k in json_api_keys.splitlines() if k.strip()]
@@ -160,80 +200,164 @@ def _render_json_mode(template: str):
 
 
 def _render_project_settings():
-    """渲染项目信息 + 高级选项面板（手动 / JSON 模式共用）。返回 (module_name, asil_level, max_tokens, temperature)。"""
+    """渲染项目信息 + 高级选项面板（手动 / JSON 模式共用）。
+    所有值持久化在 session_state 中，切换模式不丢失。
+    返回 (module_name, asil_level, max_tokens, temperature)。
+    """
+    # ── 📦 项目信息 ──
     st.sidebar.markdown("---")
     st.sidebar.markdown("##### 📦 项目信息")
-    module_name = st.sidebar.text_input("软件模块名称", value="目标模块", placeholder="如: MotorController",
-                                         help="被测软件模块的名称，将用于文档标题和需求ID前缀")
-    asil_level = st.sidebar.selectbox("ASIL 等级",
-                                       options=["QM", "ASIL A", "ASIL B", "ASIL C", "ASIL D"], index=2,
-                                       help="ISO 26262 安全等级，影响文档内容和方法要求")
 
+    module_name = st.sidebar.text_input(
+        "软件模块名称", value=st.session_state.cfg_module_name,
+        placeholder="如: MotorController",
+        help="被测软件模块的名称，将用于文档标题和需求ID前缀",
+        key="widget_module_name",
+    )
+
+    _asil_options = ["QM", "ASIL A", "ASIL B", "ASIL C", "ASIL D"]
+    _asil_idx = _asil_options.index(st.session_state.cfg_asil_level) if st.session_state.cfg_asil_level in _asil_options else 2
+    asil_level = st.sidebar.selectbox(
+        "ASIL 等级", options=_asil_options, index=_asil_idx,
+        help="ISO 26262 安全等级，影响文档内容和方法要求",
+        key="widget_asil_level",
+    )
+
+    # 项目信息保存/清除按钮
+    col_save, col_clear = st.sidebar.columns(2)
+    with col_save:
+        if st.button("💾 保存", key="save_project_info", use_container_width=True):
+            st.session_state.cfg_module_name = module_name
+            st.session_state.cfg_asil_level = asil_level
+            st.toast("✅ 项目信息已保存")
+    with col_clear:
+        if st.button("🗑️ 清除", key="clear_project_info", use_container_width=True):
+            st.session_state.cfg_module_name = "目标模块"
+            st.session_state.cfg_asil_level = "ASIL B"
+            st.rerun()
+
+    # ── 🔧 高级选项 ──
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 🔧 高级选项")
 
-    # 根据 ASIL 等级给出推荐参数值
+    # ASIL 等级变化时自动更新推荐参数
     if "_last_asil" not in st.session_state or st.session_state._last_asil != asil_level:
         st.session_state._last_asil = asil_level
-        st.session_state._auto_tokens = _TOKEN_DEFAULT.get(asil_level, 8192)
-        st.session_state._auto_temp = _TEMP_DEFAULT.get(asil_level, 0.20)
+        st.session_state.cfg_temperature = _TEMP_DEFAULT.get(asil_level, 0.20)
 
-    # max_tokens 随 ASIL 自动设定，不做独立滑块（各 Agent 可在内部单独调整）
-    max_tokens = st.session_state.get("_auto_tokens", _TOKEN_DEFAULT.get(asil_level, 8192))
-
+    max_tokens = _TOKEN_DEFAULT.get(asil_level, 8192)
     temp_hint = _TEMP_HINT.get(asil_level, "")
 
     temperature = st.sidebar.slider(
         "Temperature",
         min_value=0.0, max_value=1.0,
-        value=st.session_state.get("_auto_temp", 0.20), step=0.01,
-        help="输出随机性。0=完全确定，0.2=推荐值，0.5+=创造性增强（需求文档不建议）。"
+        value=st.session_state.cfg_temperature, step=0.01,
+        help="输出随机性。0=完全确定，0.2=推荐值，0.5+=创造性增强（需求文档不建议）。",
+        key="widget_temperature",
     )
     st.sidebar.caption(f"💡 {temp_hint}")
     st.sidebar.caption(f"💡 单次生成文档长度随 ASIL 等级自动调整（当前上限约 {max_tokens} 字）。如需微调，可展开各 Agent 的「生成选项」。")
+
+    # 高级选项保存/清除按钮
+    col_save2, col_clear2 = st.sidebar.columns(2)
+    with col_save2:
+        if st.button("💾 保存", key="save_adv_opts", use_container_width=True):
+            st.session_state.cfg_temperature = temperature
+            st.toast("✅ 高级选项已保存")
+    with col_clear2:
+        if st.button("🗑️ 重置", key="clear_adv_opts", use_container_width=True):
+            st.session_state.cfg_temperature = _TEMP_DEFAULT.get(asil_level, 0.20)
+            st.rerun()
 
     return module_name, asil_level, max_tokens, temperature
 
 
 def _render_manual_mode():
-    """手动填写模式。"""
+    """手动填写模式。所有值持久化在 session_state 中，切换模式不丢失。"""
+    _providers = ["openai", "anthropic", "dashscope", "deepseek", "glm", "kimi", "custom"]
+    _prov_idx = _providers.index(st.session_state.cfg_provider) if st.session_state.cfg_provider in _providers else 0
+
     provider = st.sidebar.selectbox(
         "模型提供商",
-        options=["openai", "anthropic", "dashscope", "deepseek", "glm", "kimi", "custom"],
+        options=_providers,
         format_func=lambda x: {
             "openai": "OpenAI (GPT)", "anthropic": "Anthropic (Claude)",
             "dashscope": "通义千问 (DashScope)", "deepseek": "DeepSeek",
             "glm": "智谱 GLM (ChatGLM)", "kimi": "Kimi (Moonshot)",
             "custom": "自定义兼容 API",
         }.get(x, x),
-        index=0,
+        index=_prov_idx,
+        key="widget_provider",
     )
 
-    api_key = st.sidebar.text_input("API Key", type="password", placeholder="sk-...",
-                                     help="密钥仅保存在当前会话内存中，不会落盘存储")
+    # 切换 provider 时自动重置 Base URL 和模型名称为新供应商默认值
+    if st.session_state.get("_last_provider") != provider:
+        st.session_state._last_provider = provider
+        st.session_state.cfg_api_base = ""
+        st.session_state.cfg_model = ""
+        # 清除 widget 缓存，让 value 参数生效
+        for wkey in ("widget_api_base", "widget_model"):
+            if wkey in st.session_state:
+                del st.session_state[wkey]
+
+    api_key = st.sidebar.text_input(
+        "API Key", type="password", value=st.session_state.cfg_api_key,
+        placeholder="sk-...",
+        help="密钥仅保存在当前会话内存中，不会落盘存储",
+        key="widget_api_key",
+    )
 
     # ── 并发 Key 池（可选）──
     with st.sidebar.expander("🔑 并发 Key 池（可选）", expanded=False):
         extra_keys_raw = st.text_area(
             "额外 API Key（每行一个）",
-            value="",
+            value=st.session_state.cfg_extra_keys,
             height=100,
             placeholder="sk-key2\nsk-key3\nsk-key4",
             help="分段并发生成时，每个分段使用不同 Key 轮转调用，避免单 Key 速率限制。\n"
                  "留空则所有分段共用上方主 Key。",
-            key="extra_api_keys",
+            key="widget_extra_keys",
         )
         extra_keys = [k.strip() for k in extra_keys_raw.strip().splitlines() if k.strip()]
         if extra_keys:
             st.caption(f"✅ 已配置 {len(extra_keys)} 个额外 Key，并发时将轮转使用共 {len(extra_keys) + 1} 个 Key")
 
     default_base_url = PROVIDER_BASE_URLS.get(provider, "")
-    api_base = st.sidebar.text_input("Base URL", value=default_base_url,
-                                      placeholder="https://your-api.com/v1" if provider == "custom" else "留空使用默认地址",
-                                      help="可修改为代理地址或内网部署地址")
+    # 如果用户已保存过 base_url 则使用保存值，否则用供应商默认
+    _saved_base = st.session_state.cfg_api_base
+    api_base = st.sidebar.text_input(
+        "Base URL", value=_saved_base if _saved_base else default_base_url,
+        placeholder="https://your-api.com/v1" if provider == "custom" else "留空使用默认地址",
+        help="可修改为代理地址或内网部署地址",
+        key="widget_api_base",
+    )
 
     default_model = DEFAULT_MODELS.get(provider, "gpt-4o")
-    model = st.sidebar.text_input("模型名称", value=default_model, placeholder=default_model)
+    _saved_model = st.session_state.cfg_model
+    model = st.sidebar.text_input(
+        "模型名称", value=_saved_model if _saved_model else default_model,
+        placeholder=default_model,
+        key="widget_model",
+    )
+
+    # ── LLM API 保存/清除按钮 ──
+    col_save, col_clear = st.sidebar.columns(2)
+    with col_save:
+        if st.button("💾 保存", key="save_llm_cfg", use_container_width=True):
+            st.session_state.cfg_provider = provider
+            st.session_state.cfg_api_key = api_key
+            st.session_state.cfg_api_base = api_base
+            st.session_state.cfg_model = model
+            st.session_state.cfg_extra_keys = extra_keys_raw
+            st.toast("✅ LLM 配置已保存")
+    with col_clear:
+        if st.button("🗑️ 清除", key="clear_llm_cfg", use_container_width=True):
+            st.session_state.cfg_provider = "openai"
+            st.session_state.cfg_api_key = ""
+            st.session_state.cfg_api_base = ""
+            st.session_state.cfg_model = ""
+            st.session_state.cfg_extra_keys = ""
+            st.rerun()
 
     # ── 项目信息 + 高级选项（与 JSON 模式共用面板）──
     module_name, asil_level, max_tokens, temperature = _render_project_settings()

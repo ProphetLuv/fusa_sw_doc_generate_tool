@@ -21,7 +21,7 @@ SYSTEM_PROMPT = (
 DEFAULT_MODELS = {
     "openai": "gpt-4o",
     "anthropic": "claude-3-5-sonnet-20241022",
-    "dashscope": "qwen-max",
+    "dashscope": "qwen3.7-max",
     "deepseek": "deepseek-v4-pro",
     "glm": "glm-5.2",
     "kimi": "kimi-k3",
@@ -29,7 +29,7 @@ DEFAULT_MODELS = {
 
 # 各供应商 OpenAI 兼容接口 base_url
 DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 GLM_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
 KIMI_BASE_URL = "https://api.moonshot.cn/v1"
 
