@@ -153,87 +153,8 @@ def _render_dashboard(config: dict):
 # 代码 / 工程管理（集中在 Dashboard）
 # ======================================================================
 
-def _process_pending_uploads() -> str:
-    """在渲染 UI 之前处理待处理的文件/ZIP 上传。
-
-    利用 file_uploader 选择文件后自动触发的 rerun，在本次渲染周期开头
-    直接读取 widget session_state 中的文件并处理。避免在 st.tabs 内部
-    调用 st.rerun()（部分 Streamlit 版本存在兼容性问题导致无响应）。
-
-    Returns:
-        "ok" — 处理成功；"error: ..." — 处理失败；"" — 无待处理上传
-    """
-    # ── 多文件上传 ──
-    uploaded_files = st.session_state.get("dash_file_upload") or []
-    if uploaded_files:
-        _fp = "files:" + ",".join(f"{f.name}:{f.size}" for f in uploaded_files)
-        if st.session_state.get("_upload_fingerprint") != _fp:
-            try:
-                file_tuples = []
-                skipped = []
-                for f in uploaded_files:
-                    raw = f.read()
-                    if len(raw) == 0:
-                        skipped.append(f"{f.name}（空文件）")
-                        continue
-                    if len(raw) > 500 * 1024:
-                        skipped.append(f"{f.name}（>{len(raw)//1024}KB，过大）")
-                        continue
-                    text = raw.decode("utf-8", errors="replace")
-                    if not _looks_like_c_code(text):
-                        skipped.append(f"{f.name}（非 C/C++ 内容）")
-                        continue
-                    file_tuples.append((f.name, text))
-                if skipped:
-                    st.warning(f"⚠️ 已跳过 {len(skipped)} 个文件: " + "、".join(skipped))
-                if file_tuples:
-                    st.session_state._upload_fingerprint = _fp
-                    _apply_module_detection(file_tuples)
-                    return "ok"
-                elif not skipped:
-                    return "error: 未能从上传文件中解析出有效内容"
-            except Exception as e:
-                st.session_state._upload_fingerprint = None
-                return f"error: 文件解析异常 — {e}"
-    else:
-        # 文件被移除时重置
-        if st.session_state.get("_had_uploaded_files"):
-            st.session_state.project_modules = {}
-            st.session_state.module_files = {}
-            st.session_state.active_module = None
-            sync_active_views()
-        st.session_state._upload_fingerprint = None
-    st.session_state._had_uploaded_files = bool(uploaded_files)
-
-    # ── ZIP 上传 ──
-    zip_file = st.session_state.get("dash_zip_upload")
-    if zip_file is not None:
-        _zip_fp = f"zip:{zip_file.name}:{zip_file.size}"
-        if st.session_state.get("_zip_fingerprint") != _zip_fp:
-            try:
-                file_tuples = _extract_files_from_zip(zip_file)
-                if file_tuples:
-                    st.session_state._zip_fingerprint = _zip_fp
-                    _apply_module_detection(file_tuples)
-                    return "ok"
-                else:
-                    return "error: ZIP 中未找到有效的 C/C++ 源文件"
-            except Exception as e:
-                st.session_state._zip_fingerprint = None
-                return f"error: ZIP 解析异常 — {e}"
-    else:
-        st.session_state._zip_fingerprint = None
-
-    return ""
-
-
 def _render_code_management(config: dict):
     """在 Dashboard 渲染代码上传 + 工程管理 + Token 预估。"""
-    # 先处理待处理的上传（在渲染 UI 之前，不依赖 st.rerun）
-    upload_result = _process_pending_uploads()
-    if upload_result.startswith("error:"):
-        st.error(f"❌ 上传处理失败：{upload_result[6:].strip()}")
-
     project_modules = st.session_state.get("project_modules", {})
     mods = list(project_modules.keys())
     code = active_code()
@@ -309,23 +230,94 @@ def _render_code_management(config: dict):
 def _render_code_upload_tabs():
     """渲染代码上传的三个 Tab：文件上传 / ZIP / 粘贴。
 
-    注意：文件/ZIP 的实际处理在 _process_pending_uploads() 中完成
-    （渲染前执行），此处仅渲染上传控件。
+    使用 widget 返回值处理上传（Streamlit 官方推荐模式，兼容所有版本）。
+    处理成功后先显示即时反馈，再尝试 st.rerun() 刷新布局。
     """
     tab_upload, tab_zip, tab_paste = st.tabs(["📂 上传文件", "📁 上传项目压缩包", "📝 粘贴代码"])
 
     with tab_upload:
-        st.file_uploader(
+        uploaded_files = st.file_uploader(
             "上传 C/C++ 源文件",
             type=["c", "h", "cpp", "hpp", "cc", "cxx"],
             accept_multiple_files=True,
             help="支持 .c / .h / .cpp / .hpp / .cc / .cxx 文件，可多选。多文件时按目录自动识别模块。",
             key="dash_file_upload",
         )
+        _had_files = st.session_state.get("_had_uploaded_files", False)
+        _has_files_now = bool(uploaded_files)
+        if _had_files and not _has_files_now:
+            st.session_state.project_modules = {}
+            st.session_state.module_files = {}
+            st.session_state.active_module = None
+            sync_active_views()
+        st.session_state._had_uploaded_files = _has_files_now
+
+        if uploaded_files:
+            # 指纹防重复：同一批文件只处理一次
+            _fp = "files:" + ",".join(f"{f.name}:{f.size}" for f in uploaded_files)
+            if st.session_state.get("_upload_fingerprint") != _fp:
+                try:
+                    file_tuples = []
+                    skipped = []
+                    for f in uploaded_files:
+                        raw = f.read()
+                        if len(raw) == 0:
+                            skipped.append(f"{f.name}（空文件）")
+                            continue
+                        if len(raw) > 500 * 1024:
+                            skipped.append(f"{f.name}（>{len(raw)//1024}KB，过大）")
+                            continue
+                        text = raw.decode("utf-8", errors="replace")
+                        if not _looks_like_c_code(text):
+                            skipped.append(f"{f.name}（非 C/C++ 内容）")
+                            continue
+                        file_tuples.append((f.name, text))
+                    if skipped:
+                        st.warning(f"⚠️ 已跳过 {len(skipped)} 个文件: " + "、".join(skipped))
+                    if file_tuples:
+                        st.session_state._upload_fingerprint = _fp
+                        _apply_module_detection(file_tuples)
+                        n_mods = len(st.session_state.project_modules)
+                        st.success(
+                            f"✅ 成功加载 {len(file_tuples)} 个文件，"
+                            f"识别出 {n_mods} 个软件模块"
+                        )
+                        time.sleep(0.3)
+                        st.rerun()
+                    elif not skipped:
+                        st.error("❌ 未能从上传文件中解析出有效内容")
+                except Exception as e:
+                    st.session_state._upload_fingerprint = None
+                    st.error(f"❌ 文件解析异常：{e}")
+        elif st.session_state.get("_upload_fingerprint"):
+            st.session_state._upload_fingerprint = None
 
     with tab_zip:
         st.caption("将整个项目文件夹打包为 .zip 上传，自动按目录结构识别软件模块")
-        st.file_uploader("上传项目压缩包 (.zip)", type=["zip"], key="dash_zip_upload")
+        zip_file = st.file_uploader("上传项目压缩包 (.zip)", type=["zip"], key="dash_zip_upload")
+        if zip_file is not None:
+            # 指纹防重复：同一个 zip 只处理一次
+            _zip_fp = f"zip:{zip_file.name}:{zip_file.size}"
+            if st.session_state.get("_zip_fingerprint") != _zip_fp:
+                try:
+                    file_tuples = _extract_files_from_zip(zip_file)
+                    if file_tuples:
+                        st.session_state._zip_fingerprint = _zip_fp
+                        _apply_module_detection(file_tuples)
+                        n_mods = len(st.session_state.project_modules)
+                        st.success(
+                            f"✅ 成功提取 {len(file_tuples)} 个源文件，"
+                            f"识别出 {n_mods} 个软件模块"
+                        )
+                        time.sleep(0.3)
+                        st.rerun()
+                    else:
+                        st.error("❌ ZIP 中未找到有效的 C/C++ 源文件")
+                except Exception as e:
+                    st.session_state._zip_fingerprint = None
+                    st.error(f"❌ ZIP 解析异常：{e}")
+        elif st.session_state.get("_zip_fingerprint"):
+            st.session_state._zip_fingerprint = None
 
     with tab_paste:
         pasted = st.text_area(
