@@ -56,7 +56,7 @@ class LLMEngine:
         model: Optional[str] = None,
         max_tokens: int = 8192,
         temperature: float = 0.2,
-        max_retries: int = 3,
+        max_retries: int = 5,
         timeout: int = 300,
     ):
         """
@@ -69,7 +69,7 @@ class LLMEngine:
             model:       模型名称，为空时使用供应商默认值
             max_tokens:  单次响应最大 token 数
             temperature: 温度参数，控制随机性
-            max_retries: 失败自动重试次数（默认 3）
+            max_retries: 失败自动重试次数（默认 5）
             timeout:     单次请求超时秒数（默认 300）
         """
         self.provider = provider.lower().strip()
@@ -128,38 +128,49 @@ class LLMEngine:
 
     def stream_generate(self, prompt: str) -> Generator[str, None, None]:
         """
-        流式生成文本（含自动重试 + 超时保护）。
+        流式生成文本（含自动重试 + 断点续传 + 超时保护）。
 
-        重试策略：实时逐 chunk yield 以保证流式体验。
-        若首次尝试在接收到任何 chunk 之前即失败，则自动重试；
-        若已有部分输出后失败，则直接抛出异常由调用方处理。
+        重试策略：
+        - 完全无响应（未收到任何 chunk）：最多重试 max_retries 次，等待递增（2s/4s/6s/8s/10s）
+        - 中途断开（已有部分输出）：断点续传，将已生成内容作为上下文，
+          请求模型从中断处继续输出，最多续传 max_retries 次
         """
         last_error = None
+        accumulated_text = ""  # 累计已收到的文本（用于断点续传）
+
         for attempt in range(1, self.max_retries + 1):
             try:
                 start = _time.time()
                 received_any = False
+
                 if self.provider in ("openai", "dashscope", "deepseek", "glm", "kimi", "custom"):
-                    for chunk in self._stream_openai(prompt, start):
+                    for chunk in self._stream_openai(prompt, start, prior_text=accumulated_text or None):
                         received_any = True
+                        accumulated_text += chunk
                         yield chunk
                 elif self.provider == "anthropic":
-                    for chunk in self._stream_anthropic(prompt, start):
+                    for chunk in self._stream_anthropic(prompt, start, prior_text=accumulated_text or None):
                         received_any = True
+                        accumulated_text += chunk
                         yield chunk
                 else:
                     raise ValueError(f"不支持的 provider: {self.provider}")
                 return  # 成功完成
             except Exception as e:
                 last_error = e
-                # 已有部分输出后失败 → 不重试，直接抛出
-                if received_any:
-                    raise RuntimeError(
-                        f"API 调用中途失败: {last_error}"
-                    ) from last_error
-                if attempt < self.max_retries:
-                    _time.sleep(2 * attempt)  # 指数退避: 2s, 4s, 6s
+                if received_any and attempt < self.max_retries:
+                    # 中途断开 → 断点续传：等待后从已有内容继续
+                    _time.sleep(2 * attempt)
                     continue
+                if not received_any and attempt < self.max_retries:
+                    # 完全无响应 → 等待后重试
+                    _time.sleep(2 * attempt)
+                    continue
+                # 重试次数耗尽
+                if accumulated_text:
+                    raise RuntimeError(
+                        f"API 调用中途失败（已续传 {attempt} 次仍未完成）: {last_error}"
+                    ) from last_error
                 raise RuntimeError(
                     f"API 调用失败（已重试 {self.max_retries} 次）: {last_error}"
                 ) from last_error
@@ -168,16 +179,31 @@ class LLMEngine:
     # OpenAI 兼容接口（含通义千问 DashScope、DeepSeek、智谱 GLM）
     # ------------------------------------------------------------------
 
-    def _stream_openai(self, prompt: str, start: float) -> Generator[str, None, None]:
-        """通过 OpenAI SDK（兼容 DashScope / DeepSeek / GLM / 自定义 API）进行流式生成。"""
+    def _stream_openai(self, prompt: str, start: float, prior_text: Optional[str] = None) -> Generator[str, None, None]:
+        """通过 OpenAI SDK（兼容 DashScope / DeepSeek / GLM / 自定义 API）进行流式生成。
+
+        Args:
+            prior_text: 断点续传时已生成的文本，模型将从此处继续输出。
+        """
         client = self._get_openai_client()
+
+        if prior_text:
+            # 断点续传：将已生成内容作为 assistant 消息，请求继续
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": prior_text},
+                {"role": "user", "content": "请从上述内容中断处继续输出，不要重复已有内容，直接输出后续部分。"},
+            ]
+        else:
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ]
 
         stream = client.chat.completions.create(
             model=self.model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
+            messages=messages,
             max_tokens=self.max_tokens,
             temperature=self.temperature,
             stream=True,
@@ -204,16 +230,30 @@ class LLMEngine:
     # Anthropic Claude 接口
     # ------------------------------------------------------------------
 
-    def _stream_anthropic(self, prompt: str, start: float) -> Generator[str, None, None]:
-        """通过 Anthropic SDK 进行流式生成。"""
+    def _stream_anthropic(self, prompt: str, start: float, prior_text: Optional[str] = None) -> Generator[str, None, None]:
+        """通过 Anthropic SDK 进行流式生成。
+
+        Args:
+            prior_text: 断点续传时已生成的文本，模型将从此处继续输出。
+        """
         client = self._get_anthropic_client()
+
+        if prior_text:
+            # 断点续传：将已生成内容作为 assistant 消息，请求继续
+            messages = [
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": prior_text},
+                {"role": "user", "content": "请从上述内容中断处继续输出，不要重复已有内容，直接输出后续部分。"},
+            ]
+        else:
+            messages = [{"role": "user", "content": prompt}]
 
         with client.messages.stream(
             model=self.model,
             max_tokens=self.max_tokens,
             temperature=self.temperature,
             system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
         ) as stream:
             for text in stream.text_stream:
                 if _time.time() - start > self.timeout:
