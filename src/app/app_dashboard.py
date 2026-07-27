@@ -249,40 +249,54 @@ def _render_code_upload_tabs():
         st.session_state._had_uploaded_files = _has_files_now
 
         if uploaded_files:
-            file_tuples = []
-            skipped = []
-            parse_progress = st.progress(0, text="解析文件中...")
-            total_files = len(uploaded_files)
-            for idx, f in enumerate(uploaded_files):
-                parse_progress.progress(
-                    (idx + 1) / total_files,
-                    text=f"解析文件 {idx + 1}/{total_files}: {f.name}"
-                )
-                raw = f.read()
-                if len(raw) == 0:
-                    skipped.append(f"{f.name}（空文件）")
-                    continue
-                if len(raw) > 500 * 1024:
-                    skipped.append(f"{f.name}（>{len(raw)//1024}KB，过大）")
-                    continue
-                text = raw.decode("utf-8", errors="replace")
-                if not _looks_like_c_code(text):
-                    skipped.append(f"{f.name}（非 C/C++ 内容）")
-                    continue
-                file_tuples.append((f.name, text))
-            parse_progress.empty()
-            if skipped:
-                st.warning(f"⚠️ 已跳过 {len(skipped)} 个文件: " + "、".join(skipped))
-            if file_tuples:
-                _apply_module_detection(file_tuples)
+            # 指纹防重复处理：同一批文件只检测一次，处理后 rerun 刷新 UI
+            _fp = "files:" + ",".join(f"{f.name}:{f.size}" for f in uploaded_files)
+            if st.session_state.get("_upload_fingerprint") != _fp:
+                file_tuples = []
+                skipped = []
+                parse_progress = st.progress(0, text="解析文件中...")
+                total_files = len(uploaded_files)
+                for idx, f in enumerate(uploaded_files):
+                    parse_progress.progress(
+                        (idx + 1) / total_files,
+                        text=f"解析文件 {idx + 1}/{total_files}: {f.name}"
+                    )
+                    raw = f.read()
+                    if len(raw) == 0:
+                        skipped.append(f"{f.name}（空文件）")
+                        continue
+                    if len(raw) > 500 * 1024:
+                        skipped.append(f"{f.name}（>{len(raw)//1024}KB，过大）")
+                        continue
+                    text = raw.decode("utf-8", errors="replace")
+                    if not _looks_like_c_code(text):
+                        skipped.append(f"{f.name}（非 C/C++ 内容）")
+                        continue
+                    file_tuples.append((f.name, text))
+                parse_progress.empty()
+                if skipped:
+                    st.warning(f"⚠️ 已跳过 {len(skipped)} 个文件: " + "、".join(skipped))
+                if file_tuples:
+                    st.session_state._upload_fingerprint = _fp
+                    _apply_module_detection(file_tuples)
+                    st.rerun()
+        elif st.session_state.get("_upload_fingerprint"):
+            st.session_state._upload_fingerprint = None
 
     with tab_zip:
         st.caption("将整个项目文件夹打包为 .zip 上传，自动按目录结构识别软件模块")
         zip_file = st.file_uploader("上传项目压缩包 (.zip)", type=["zip"], key="dash_zip_upload")
         if zip_file is not None:
-            file_tuples = _extract_files_from_zip(zip_file)
-            if file_tuples:
-                _apply_module_detection(file_tuples)
+            # 指纹防重复处理：同一个 zip 只检测一次，处理后 rerun 刷新 UI
+            _zip_fp = f"zip:{zip_file.name}:{zip_file.size}"
+            if st.session_state.get("_zip_fingerprint") != _zip_fp:
+                file_tuples = _extract_files_from_zip(zip_file)
+                if file_tuples:
+                    st.session_state._zip_fingerprint = _zip_fp
+                    _apply_module_detection(file_tuples)
+                    st.rerun()
+        elif st.session_state.get("_zip_fingerprint"):
+            st.session_state._zip_fingerprint = None
 
     with tab_paste:
         pasted = st.text_area(

@@ -55,11 +55,7 @@ def render_sidebar():
   "api_key": "sk-xxx",
   "api_keys": ["sk-key2", "sk-key3"],
   "api_base": "https://api.deepseek.com/v1",
-  "model": "deepseek-v4-pro",
-  "max_tokens": 8192,
-  "temperature": 0.2,
-  "module_name": "MotorController",
-  "asil_level": "ASIL B"
+  "model": "deepseek-v4-pro"
 }"""
 
     if "json_config" not in st.session_state:
@@ -74,17 +70,25 @@ def render_sidebar():
 
 
 def _render_json_mode(template: str):
-    """JSON 导入模式。"""
+    """JSON 导入模式：仅导入模型 API 连接参数，项目信息与生成参数由面板配置。"""
     st.sidebar.markdown("##### 📂 上传配置文件")
     uploaded = st.sidebar.file_uploader("选择 JSON 配置文件", type=["json"],
-                                        help="上传后自动填充所有配置项")
+                                        help="仅导入模型 API 相关参数（provider / api_key / api_base / model）")
 
     if uploaded is not None:
         try:
             raw = uploaded.read().decode("utf-8")
-            cfg = json.loads(raw)
+            full_cfg = json.loads(raw)
+            # 仅保留 API 连接相关字段，其余参数由用户在面板中配置
+            cfg = {
+                "provider": full_cfg.get("provider", "openai"),
+                "api_key": full_cfg.get("api_key", ""),
+                "api_keys": full_cfg.get("api_keys", []),
+                "api_base": full_cfg.get("api_base", ""),
+                "model": full_cfg.get("model", ""),
+            }
             st.session_state.json_config = cfg
-            st.sidebar.success(f"✅ 已加载配置（provider: {cfg.get('provider', '未指定')}）")
+            st.sidebar.success(f"✅ 已加载配置（provider: {cfg['provider']}）")
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
             st.sidebar.error(f"❌ 解析失败: {e}")
             cfg = st.session_state.json_config
@@ -96,34 +100,37 @@ def _render_json_mode(template: str):
         st.sidebar.markdown("---")
         st.sidebar.markdown("##### 📋 配置模板")
         st.sidebar.code(template, language="json")
-        st.sidebar.caption("复制上方模板，修改后保存为 .json 文件上传")
+        st.sidebar.caption("复制上方模板，修改后保存为 .json 文件上传。\n"
+                           "模块名称、ASIL 等级、Temperature 等参数在下方面板中配置。")
         return _empty_config()
 
     st.sidebar.markdown("---")
     st.sidebar.markdown("##### 📋 已加载配置")
     provider = cfg.get("provider", "openai")
     st.sidebar.text(f"供应商:   {provider}")
-    st.sidebar.text(f"模型:     {cfg.get('model', DEFAULT_MODELS.get(provider, 'gpt-4o'))}")
-    st.sidebar.text(f"Base URL: {cfg.get('api_base', '默认')}")
-    st.sidebar.text(f"生成长度: {cfg.get('max_tokens', 8192)}")
-    st.sidebar.text(f"Temperature: {cfg.get('temperature', 0.2)}")
-    st.sidebar.text(f"模块名称: {cfg.get('module_name', '目标模块')}")
-    st.sidebar.text(f"ASIL:     {cfg.get('asil_level', 'ASIL B')}")
+    st.sidebar.text(f"模型:     {cfg.get('model') or DEFAULT_MODELS.get(provider, 'gpt-4o')}")
+    st.sidebar.text(f"Base URL: {cfg.get('api_base') or '默认'}")
     if cfg.get("api_key"):
         st.sidebar.caption("🔑 API Key 已加载（已隐藏）")
 
-    # ── 配置导出（紧跟 LLM 配置）──
-    # API Key 脱敏导出，避免明文泄露
+    if st.sidebar.button("🗑️ 清除已导入的配置", use_container_width=True, key="clear_json_cfg"):
+        st.session_state.json_config = {}
+        st.rerun()
+
+    # ── 项目信息 + 高级选项（与手动模式共用面板）──
+    module_name, asil_level, max_tokens, temperature = _render_project_settings()
+
+    # ── 配置导出（API Key 脱敏）──
     masked_key = _mask_api_key(cfg.get("api_key", "")) if cfg.get("api_key") else ""
     export_cfg = {
         "provider": provider,
         "api_key": masked_key,
         "api_base": cfg.get("api_base") or "",
         "model": cfg.get("model") or DEFAULT_MODELS.get(provider, "gpt-4o"),
-        "max_tokens": cfg.get("max_tokens", 8192),
-        "temperature": cfg.get("temperature", 0.2),
-        "module_name": cfg.get("module_name", "目标模块"),
-        "asil_level": cfg.get("asil_level", "ASIL B"),
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "module_name": module_name,
+        "asil_level": asil_level,
     }
     st.sidebar.download_button(
         "💾 导出当前 LLM 配置为 JSON",
@@ -144,12 +151,48 @@ def _render_json_mode(template: str):
         "api_key": primary_key,
         "api_base": cfg.get("api_base") or None,
         "model": cfg.get("model") or DEFAULT_MODELS.get(provider, "gpt-4o"),
-        "max_tokens": cfg.get("max_tokens", 8192),
-        "temperature": cfg.get("temperature", 0.2),
-        "module_name": cfg.get("module_name", "目标模块"),
-        "asil_level": cfg.get("asil_level", "ASIL B"),
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "module_name": module_name,
+        "asil_level": asil_level,
         "api_keys": all_keys,
     }
+
+
+def _render_project_settings():
+    """渲染项目信息 + 高级选项面板（手动 / JSON 模式共用）。返回 (module_name, asil_level, max_tokens, temperature)。"""
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("##### 📦 项目信息")
+    module_name = st.sidebar.text_input("软件模块名称", value="目标模块", placeholder="如: MotorController",
+                                         help="被测软件模块的名称，将用于文档标题和需求ID前缀")
+    asil_level = st.sidebar.selectbox("ASIL 等级",
+                                       options=["QM", "ASIL A", "ASIL B", "ASIL C", "ASIL D"], index=2,
+                                       help="ISO 26262 安全等级，影响文档内容和方法要求")
+
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🔧 高级选项")
+
+    # 根据 ASIL 等级给出推荐参数值
+    if "_last_asil" not in st.session_state or st.session_state._last_asil != asil_level:
+        st.session_state._last_asil = asil_level
+        st.session_state._auto_tokens = _TOKEN_DEFAULT.get(asil_level, 8192)
+        st.session_state._auto_temp = _TEMP_DEFAULT.get(asil_level, 0.20)
+
+    # max_tokens 随 ASIL 自动设定，不做独立滑块（各 Agent 可在内部单独调整）
+    max_tokens = st.session_state.get("_auto_tokens", _TOKEN_DEFAULT.get(asil_level, 8192))
+
+    temp_hint = _TEMP_HINT.get(asil_level, "")
+
+    temperature = st.sidebar.slider(
+        "Temperature",
+        min_value=0.0, max_value=1.0,
+        value=st.session_state.get("_auto_temp", 0.20), step=0.01,
+        help="输出随机性。0=完全确定，0.2=推荐值，0.5+=创造性增强（需求文档不建议）。"
+    )
+    st.sidebar.caption(f"💡 {temp_hint}")
+    st.sidebar.caption(f"💡 单次生成文档长度随 ASIL 等级自动调整（当前上限约 {max_tokens} 字）。如需微调，可展开各 Agent 的「生成选项」。")
+
+    return module_name, asil_level, max_tokens, temperature
 
 
 def _render_manual_mode():
@@ -192,36 +235,8 @@ def _render_manual_mode():
     default_model = DEFAULT_MODELS.get(provider, "gpt-4o")
     model = st.sidebar.text_input("模型名称", value=default_model, placeholder=default_model)
 
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("##### 📦 项目信息")
-    module_name = st.sidebar.text_input("软件模块名称", value="目标模块", placeholder="如: MotorController",
-                                         help="被测软件模块的名称，将用于文档标题和需求ID前缀")
-    asil_level = st.sidebar.selectbox("ASIL 等级",
-                                       options=["QM", "ASIL A", "ASIL B", "ASIL C", "ASIL D"], index=2,
-                                       help="ISO 26262 安全等级，影响文档内容和方法要求")
-
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### 🔧 高级选项")
-
-    # 根据 ASIL 等级给出推荐参数值
-    if "_last_asil" not in st.session_state or st.session_state._last_asil != asil_level:
-        st.session_state._last_asil = asil_level
-        st.session_state._auto_tokens = _TOKEN_DEFAULT.get(asil_level, 8192)
-        st.session_state._auto_temp = _TEMP_DEFAULT.get(asil_level, 0.20)
-
-    # max_tokens 随 ASIL 自动设定，不做独立滑块（各 Agent 可在内部单独调整）
-    max_tokens = st.session_state.get("_auto_tokens", _TOKEN_DEFAULT.get(asil_level, 8192))
-
-    temp_hint = _TEMP_HINT.get(asil_level, "")
-
-    temperature = st.sidebar.slider(
-        "Temperature",
-        min_value=0.0, max_value=1.0,
-        value=st.session_state.get("_auto_temp", 0.20), step=0.01,
-        help="输出随机性。0=完全确定，0.2=推荐值，0.5+=创造性增强（需求文档不建议）。"
-    )
-    st.sidebar.caption(f"💡 {temp_hint}")
-    st.sidebar.caption(f"💡 单次生成文档长度随 ASIL 等级自动调整（当前上限约 {max_tokens} 字）。如需微调，可展开各 Agent 的「生成选项」。")
+    # ── 项目信息 + 高级选项（与 JSON 模式共用面板）──
+    module_name, asil_level, max_tokens, temperature = _render_project_settings()
 
     # ── 配置导出（所有参数已就绪后导出）──
     masked_key = _mask_api_key(api_key) if api_key.strip() else ""
