@@ -84,6 +84,8 @@ const API = {
   // ---- 模板 ----
   listTemplates() { return this.get("/api/templates"); },
   uploadTemplate(agent, file, signal) { const fd = new FormData(); fd.append("file", file); return this.postForm(`/api/templates/${agent}`, fd, signal); },
+  uploadTemplateLocalPath(agent, path) { return this.post(`/api/templates/${agent}/local-path`, { path }); },
+  pickTemplatePath() { return this.get("/api/templates/pick"); },
   deleteTemplate(agent) { return this.del(`/api/templates/${agent}`); },
 
   // ---- 生成取消 ----

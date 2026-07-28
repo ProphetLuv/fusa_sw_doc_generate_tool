@@ -5,6 +5,8 @@ import io
 import time
 import difflib
 import zipfile
+import sys
+import subprocess
 import asyncio
 import logging
 
@@ -12,7 +14,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import Response
 
 from server.state import STATE
-from server.models import CrossValidateRequest
+from server.models import CrossValidateRequest, LocalPathRequest
 from server.generation import _run_validation
 from server.estimate import AGENT_META, AGENT_ORDER
 from doc_exporter import export_to_word, export_fmea_to_excel
@@ -241,3 +243,95 @@ async def upload_template(agent: str, file: UploadFile = File(...)):
 def delete_template(agent: str):
     STATE.agent_templates.pop(agent.upper(), None)
     return {"ok": True}
+
+
+# ---- 模板本地路径导入（绕过浏览器上传，避免安全软件拦截） ----
+
+_TEMPLATE_PICKER_SCRIPT = """
+import sys
+import tkinter as tk
+from tkinter import filedialog
+root = tk.Tk()
+root.withdraw()
+root.attributes("-topmost", True)
+root.update()
+path = filedialog.askopenfilename(
+    title="选择模板文件",
+    filetypes=[
+        ("所有支持的模板", "*.md *.txt *.text *.rst *.docx *.xlsx"),
+        ("Markdown 文件", "*.md"),
+        ("Word 文档", "*.docx"),
+        ("Excel 表格", "*.xlsx"),
+        ("文本文件", "*.txt *.text *.rst"),
+        ("所有文件", "*.*"),
+    ],
+)
+root.destroy()
+sys.stdout.write(path or "")
+"""
+
+
+@router.get("/api/templates/pick")
+def pick_template_path():
+    """在服务器本机弹出原生文件选择对话框，返回选中的模板文件路径。"""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", _TEMPLATE_PICKER_SCRIPT],
+            capture_output=True, text=True, timeout=300,
+        )
+        path = (result.stdout or "").strip()
+        return {"path": path or None}
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=408, detail="文件选择对话框超时未操作")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"无法弹出文件选择对话框：{e}")
+
+
+@router.post("/api/templates/{agent}/local-path")
+def upload_template_local_path(agent: str, req: LocalPathRequest):
+    """从本机磁盘路径导入模板文件，绕过浏览器上传通道。
+
+    服务器直接读取本地文件，不受浏览器安全策略或安全软件拦截影响。
+    """
+    import os
+
+    agent = agent.upper()
+    path = req.path.strip().strip('"').strip("'")
+
+    if not os.path.exists(path):
+        raise HTTPException(status_code=400, detail=f"文件不存在：{path}")
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=400, detail=f"路径不是文件：{path}")
+
+    size_mb = os.path.getsize(path) / (1024 * 1024)
+    MAX_SIZE = 50 * 1024 * 1024  # 50 MB
+    if os.path.getsize(path) > MAX_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"模板文件过大（{size_mb:.1f} MB），上限 {MAX_SIZE // (1024 * 1024)} MB")
+
+    # 检查扩展名（lstrip 去掉 splitext 返回的前导点）
+    ext = os.path.splitext(path)[1].lower().lstrip(".")
+    supported = get_supported_extensions()
+    if ext not in supported:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的文件格式 {ext}，支持：{', '.join(supported)}")
+
+    _logger.info("本地路径导入模板: agent=%s path=%s size=%.2f MB", agent, path, size_mb)
+
+    # 直接读取文件内容并解析
+    with open(path, "rb") as fh:
+        raw = fh.read()
+
+    buf = io.BytesIO(raw)
+    buf.name = os.path.basename(path)
+
+    parsed = parse_template(buf)
+    if not parsed:
+        _logger.warning("模板解析返回空: agent=%s path=%s", agent, path)
+        raise HTTPException(status_code=400, detail=f"模板解析失败: {os.path.basename(path)}")
+
+    _logger.info("模板本地导入成功: agent=%s chars=%d", agent, len(parsed))
+    STATE.agent_templates[agent] = parsed
+    return {"agent": agent, "chars": len(parsed), "size_mb": round(size_mb, 2), "preview": parsed[:3000], "filename": os.path.basename(path)}

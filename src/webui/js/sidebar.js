@@ -113,10 +113,13 @@ const Sidebar = {
         <select class="form-select form-select-sm mb-2" id="tpl-agent">
           ${AGENT_ORDER.map((a) => `<option value="${a}" ${a === tplAgent ? "selected" : ""}>${a}${Store.templates[a] ? " ✓" : ""}</option>`).join("")}
         </select>
-        <label class="btn btn-outline-secondary btn-sm w-100 mb-1">
-          <span id="tpl-upload-text">${tplChars ? "重新上传模板" : "上传模板文件"}</span>
-          <input type="file" id="tpl-file" accept=".md,.txt,.text,.rst,.docx,.xlsx" hidden />
-        </label>
+        <div class="d-flex gap-2">
+          <label class="btn btn-outline-secondary btn-sm flex-fill mb-1">
+            <span id="tpl-upload-text">${tplChars ? "重新上传模板" : "上传模板文件"}</span>
+            <input type="file" id="tpl-file" accept=".md,.txt,.text,.rst,.docx,.xlsx" hidden />
+          </label>
+          <button class="btn btn-outline-secondary btn-sm flex-fill mb-1" id="tpl-local" type="button">从本地导入</button>
+        </div>
         <div class="small ${tplChars ? "text-success" : "text-muted"}" id="tpl-status">
           ${tplChars
             ? `<i class="bi bi-check-circle-fill"></i> ${tplAgent} 模板已加载（${tplChars.toLocaleString()} 字符）<button type="button" class="btn btn-link btn-sm p-0 ms-1 align-baseline text-danger" id="tpl-remove">移除</button>`
@@ -277,6 +280,51 @@ const Sidebar = {
         UI.toast("模板解析失败: " + msg, "error");
       }
       e.target.value = "";
+    });
+
+    // 模板：从本地路径导入（绕过浏览器上传，避免安全软件拦截）
+    $("tpl-local").addEventListener("click", async () => {
+      const agent = this.tplAgent || $("tpl-agent").value;
+      const st = $("tpl-status");
+      const txt = $("tpl-upload-text");
+
+      // 第一步：弹出本地文件选择对话框
+      st.className = "small text-muted";
+      st.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> 正在打开文件选择对话框…`;
+      try {
+        const pick = await API.pickTemplatePath();
+        if (!pick.path) {
+          // 用户取消了选择
+          st.className = "small text-muted";
+          const tplChars = Store.templates[agent] || 0;
+          st.innerHTML = tplChars
+            ? `<i class="bi bi-check-circle-fill"></i> ${agent} 模板已加载（${tplChars.toLocaleString()} 字符）<button type="button" class="btn btn-link btn-sm p-0 ms-1 align-baseline text-danger" id="tpl-remove">移除</button>`
+            : `${agent} 暂无模板 · 支持 .md/.txt/.rst/.docx/.xlsx`;
+          return;
+        }
+
+        // 第二步：通知服务端从本地路径读取并解析文件
+        if (txt) txt.textContent = "解析中…";
+        st.className = "small text-muted";
+        const fn = pick.path.replace(/\\/g, "/").split("/").pop();
+        st.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> 正在解析 ${UI.esc(fn)}…`;
+
+        const r = await API.uploadTemplateLocalPath(agent, pick.path);
+        Store.templates[agent] = r.chars;
+        UI.toast(`${agent} 模板已加载（${r.chars.toLocaleString()} 字符，${r.filename || fn}）`, "success");
+        this.render();
+      } catch (err) {
+        if (txt) txt.textContent = "上传模板文件";
+        st.className = "small text-danger";
+        let msg;
+        if (err.message && err.message.includes("Failed to fetch")) {
+          msg = "无法连接服务器，请确认服务已启动后刷新页面";
+        } else {
+          msg = UI.esc(err.message || "未知错误");
+        }
+        st.innerHTML = `<i class="bi bi-x-circle-fill"></i> 导入失败：${msg}`;
+        UI.toast("模板导入失败: " + msg, "error");
+      }
     });
 
     // 移除已加载模板
