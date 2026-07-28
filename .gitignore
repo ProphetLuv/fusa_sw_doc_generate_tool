@@ -4,3 +4,4 @@ __pycache__/
 saved_results.json
 generation_log.jsonl
 *.log
+.tmp_verify/

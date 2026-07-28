@@ -13,15 +13,22 @@ router = APIRouter(prefix="/api/generate", tags=["generate"])
 
 
 @router.get("/batch/stream")
-def generate_batch_stream(agents: Optional[str] = None):
-    """批量流式生成（SSE）。agents 为逗号分隔的 Agent 名（如 SRS,SAD），缺省为全部 7 个。
+def generate_batch_stream(agents: Optional[str] = None, modules: Optional[str] = None):
+    """批量流式生成（SSE）。
+
+    agents：逗号分隔的 Agent 名（如 SRS,SAD），缺省为全部 7 个。
+    modules：逗号分隔的模块名，缺省用 STATE.selected_modules（工程总览的勾选范围）。
+        单文档工作台多选模块时会显式传入，避免与工程总览的勾选状态相互干扰。
 
     注：此路由必须定义在 /{agent}/stream 之前，否则 "batch" 会被动态路由当作 agent 名抢先匹配。
     """
     agent_list = None
     if agents:
         agent_list = [a.strip().upper() for a in agents.split(",") if a.strip()]
-    return sse_response(gen.generate_batch_stream(dict(STATE.config), agents=agent_list))
+    module_list = None
+    if modules:
+        module_list = [m.strip() for m in modules.split(",") if m.strip()]
+    return sse_response(gen.generate_batch_stream(dict(STATE.config), agents=agent_list, modules=module_list))
 
 
 @router.get("/{agent}/stream")

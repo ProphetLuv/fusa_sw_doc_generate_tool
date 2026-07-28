@@ -313,11 +313,13 @@ def _chunked_generate(agent_type, code, ctx, cfg, engine, custom_template, colle
 # 批量生成（SSE 事件生成器）
 # ======================================================================
 
-def generate_batch_stream(cfg, agents=None):
+def generate_batch_stream(cfg, agents=None, modules=None):
     """按模块 × Agent 顺序批量生成，SSE 事件生成器。支持断点续传与取消。
 
     agents 为 None 时生成全部 7 个 Agent；传入 Agent 名列表时只生成其中的子集
     （如仅 SRS 跑多个模块），顺序仍遵循 AGENT_ORDER。
+    modules 为 None 时用 STATE.selected_modules（缺省全部模块）；传入模块名列表时
+    只生成其中的模块（单文档工作台多选模块时显式传入）。
     """
     if not cfg.get("api_key"):
         yield {"event": "error", "data": {"message": "未配置 API Key"}}
@@ -330,8 +332,8 @@ def generate_batch_stream(cfg, agents=None):
     agent_defaults = get_agent_token_defaults(cfg.get("asil_level", "ASIL B"))
     project_modules = STATE.project_modules
     if project_modules:
-        modules = [m for m in (STATE.selected_modules or list(project_modules.keys()))
-                   if m in project_modules]
+        scope = modules or STATE.selected_modules or list(project_modules.keys())
+        modules = [m for m in scope if m in project_modules]
     else:
         modules = [cfg.get("module_name", "目标模块")]
         project_modules = {modules[0]: STATE.active_code()}

@@ -14,6 +14,10 @@ const Workspace = {
     const agent = Store.wsAgent;
     const m = AGENT_META[agent];
     const mod = Store.activeModule || Store.defaultModuleName;
+    const modNames = Store.modules.length ? Store.modules.map((x) => x.name) : [mod];
+    const preSel = (Store.activeModule && modNames.includes(Store.activeModule)) ? Store.activeModule : modNames[0];
+    const modChips = modNames.map((n) =>
+      `<button type="button" class="btn btn-sm ${n === preSel ? "btn-primary active" : "btn-outline-primary"} ws-mod-chip" data-mod="${UI.esc(n)}">${UI.esc(n)}</button>`).join("");
     this.el().innerHTML = `
       <div class="d-flex justify-content-between align-items-center mb-2">
         <h1 class="main-title" style="font-size:1.6rem;text-align:left;margin:0">
@@ -30,9 +34,14 @@ const Workspace = {
               ${AGENT_ORDER.map((a) => `<option value="${a}" ${a === agent ? "selected" : ""}>${AGENT_META[a].icon} ${a} · ${AGENT_META[a].full}</option>`).join("")}
             </select>
 
-            <label class="section-label">活动模块</label>
-            <div class="mb-3"><span class="badge text-bg-primary">${UI.esc(mod)}</span>
-              ${Store.hasCode ? "" : '<span class="text-danger small">（无代码）</span>'}</div>
+            <div class="d-flex align-items-center gap-2 mb-1">
+              <label class="section-label mb-0">目标模块</label>
+              <button class="btn btn-link btn-sm p-0" id="ws-mod-all">全选</button>
+              <span class="text-muted">·</span>
+              <button class="btn btn-link btn-sm p-0" id="ws-mod-none">清空</button>
+            </div>
+            <div id="ws-mod-chips" class="d-flex flex-wrap gap-1">${modChips}</div>
+            <div class="form-text mb-3">选 1 个＝单文档生成；选多个＝用本 Agent 批量生成所选模块。${Store.hasCode ? "" : '<span class="text-danger">（无代码）</span>'}</div>
 
             <div id="prior-hint" class="mb-3"></div>
 
@@ -96,8 +105,30 @@ const Workspace = {
     $("ws-review").addEventListener("change", () => this.refreshEstimate());
     $("ws-generate").addEventListener("click", () => this.generate());
     $("ws-stop").addEventListener("click", () => this.stop());
+    this._bindModChips();
     this.el().querySelectorAll("#ws-result-tabs button").forEach((b) =>
       b.addEventListener("click", () => this.switchTab(b.dataset.rtab)));
+  },
+
+  /* 目标模块 chips：切换 / 全选 / 清空（选 1 个单生成，选多个批量） */
+  _bindModChips() {
+    const setChip = (chip, on) => {
+      chip.classList.toggle("active", on);
+      chip.classList.toggle("btn-primary", on);
+      chip.classList.toggle("btn-outline-primary", !on);
+    };
+    document.querySelectorAll(".ws-mod-chip").forEach((chip) =>
+      chip.addEventListener("click", () => setChip(chip, !chip.classList.contains("active"))));
+    const all = document.getElementById("ws-mod-all");
+    const none = document.getElementById("ws-mod-none");
+    if (all) all.addEventListener("click", () =>
+      document.querySelectorAll(".ws-mod-chip").forEach((c) => setChip(c, true)));
+    if (none) none.addEventListener("click", () =>
+      document.querySelectorAll(".ws-mod-chip").forEach((c) => setChip(c, false)));
+  },
+
+  _selectedModules() {
+    return Array.from(document.querySelectorAll(".ws-mod-chip.active")).map((c) => c.dataset.mod);
   },
 
   switchTab(tab) {
@@ -173,11 +204,22 @@ const Workspace = {
   },
 
   /* ---------------- 生成（SSE） ---------------- */
-  generate() {
+  async generate() {
     if (!Store.config.api_key) { UI.toast("请先在左侧配置 API Key", "warn"); return; }
-    if (!Store.hasCode) { UI.toast("当前模块无代码", "warn"); return; }
+    if (!Store.hasCode) { UI.toast("当前无代码", "warn"); return; }
     if (Store.generating) { UI.toast("已有生成任务在进行", "warn"); return; }
+    const mods = this._selectedModules();
+    if (!mods.length) { UI.toast("请至少选择一个模块", "warn"); return; }
+    if (mods.length > 1) { this.generateBatch(mods); return; }
+    // 单模块：若与当前活动模块不同，先切换以对齐历史/已有文档/下载文件名
+    if (mods[0] !== Store.activeModule) {
+      try { Store.applyModulesSnapshot(await API.setActiveModule(mods[0])); }
+      catch (err) { UI.toast(err.message, "error"); return; }
+    }
+    this._generateSingle();
+  },
 
+  _generateSingle() {
     Store.generating = true;
     this._fullText = "";
     this._chunkBuffers = {};
@@ -247,6 +289,61 @@ const Workspace = {
         this.finish();
       },
       _neterror: () => { if (Store.generating) { docEl.classList.remove("stream-cursor"); this.finish(); } },
+    });
+  },
+
+  /* ---------------- 批量生成（本 Agent × 多模块，SSE） ---------------- */
+  generateBatch(mods) {
+    const agent = Store.wsAgent;
+    Store.generating = true;
+    this._fullText = "";
+    document.getElementById("ws-generate").classList.add("d-none");
+    document.getElementById("ws-stop").classList.remove("d-none");
+    this.switchTab("doc");
+    const docEl = document.getElementById("ws-doc");
+    docEl.classList.remove("stream-cursor");
+    docEl.innerHTML = `
+      <div class="progress progress-thin mb-2"><div class="progress-bar" id="ws-batch-bar" style="width:0%"></div></div>
+      <div id="ws-batch-cur" class="text-muted small mb-1"></div>
+      <div id="ws-batch-body" class="doc-render"></div>`;
+    document.getElementById("ws-downloads").innerHTML = "";
+    const st = document.getElementById("ws-status");
+    st.innerHTML = `🚀 批量：用 <b>${UI.esc(agent)}</b> 生成 ${mods.length} 个模块`;
+    const bar = document.getElementById("ws-batch-bar");
+    const cur = document.getElementById("ws-batch-cur");
+    const body = document.getElementById("ws-batch-body");
+    let curKey = "";
+    let curText = "";
+
+    const q = new URLSearchParams();
+    q.set("agents", agent);
+    q.set("modules", mods.join(","));
+    this._sse = openSSE(`/api/generate/batch/stream?${q}`, {
+      progress: (d) => {
+        bar.style.width = Math.round((d.step / d.total) * 100) + "%";
+        cur.innerHTML = `批量 ${d.step}/${d.total} · 正在生成：<b>${UI.esc(d.module)}</b> · ${UI.esc(d.agent)}`;
+        const key = d.module + "|" + d.agent;
+        if (key !== curKey) { curKey = key; curText = ""; body.innerHTML = ""; }
+      },
+      status: (d) => { st.textContent = d.message; },
+      token: (d) => {
+        curText += d.text;
+        renderMarkdown(body, curText);
+        body.scrollTop = body.scrollHeight;
+      },
+      batch_done: (d) => {
+        bar.style.width = "100%";
+        bar.classList.add(d.cancelled ? "bg-warning" : "bg-success");
+        st.textContent = d.summary;
+        cur.textContent = "";
+        this.finish();
+        UI.toast(d.summary, d.cancelled ? "warn" : "success");
+        Dashboard.reloadModulesAndDocs();
+        this.loadHistory();
+        this.loadExistingDoc();
+      },
+      error: (d) => { st.textContent = "❌ " + d.message; UI.toast("批量生成错误: " + d.message, "error"); this.finish(); },
+      _neterror: () => { if (Store.generating) { this.finish(); } },
     });
   },
 
