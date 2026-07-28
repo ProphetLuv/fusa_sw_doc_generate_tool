@@ -17,9 +17,9 @@ const Dashboard = {
       <div class="card mb-3"><div class="card-body">
         <h6 class="card-title">📥 代码上传</h6>
         <ul class="nav nav-tabs mb-3" id="upload-tabs">
-          <li class="nav-item"><button class="nav-link active" data-up="files">多文件</button></li>
+          <li class="nav-item"><button class="nav-link active" data-up="local">本地路径（建议）</button></li>
+          <li class="nav-item"><button class="nav-link" data-up="files">多文件</button></li>
           <li class="nav-item"><button class="nav-link" data-up="zip">ZIP 包</button></li>
-          <li class="nav-item"><button class="nav-link" data-up="local">本地路径</button></li>
           <li class="nav-item"><button class="nav-link" data-up="paste">粘贴代码</button></li>
         </ul>
         <div id="upload-panels"></div>
@@ -40,7 +40,7 @@ const Dashboard = {
       <!-- 跨文档校验结果 -->
       <div id="cross-panel" class="mt-3"></div>
     `;
-    this.renderUploadPanel("files");
+    this.renderUploadPanel("local");
     this.renderModules();
     this.renderAgents();
     this.renderActions();

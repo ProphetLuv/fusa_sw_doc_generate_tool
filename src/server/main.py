@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse
 from server.state import STATE
 from server.routers import config, upload, modules, estimate, generate, docs
 
-app = FastAPI(title="软件功能安全文档生成器", version="2.0")
+app = FastAPI(title="软件功能安全文档生成器", version="3.0")
 
 app.include_router(config.router)
 app.include_router(upload.router)

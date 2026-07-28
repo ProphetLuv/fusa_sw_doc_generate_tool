@@ -114,11 +114,11 @@ const Sidebar = {
           ${AGENT_ORDER.map((a) => `<option value="${a}" ${a === tplAgent ? "selected" : ""}>${a}${Store.templates[a] ? " ✓" : ""}</option>`).join("")}
         </select>
         <div class="d-flex gap-2">
+          <button class="btn btn-outline-secondary btn-sm flex-fill mb-1" id="tpl-local" type="button">从本地导入（建议）</button>
           <label class="btn btn-outline-secondary btn-sm flex-fill mb-1">
             <span id="tpl-upload-text">${tplChars ? "重新上传模板" : "上传模板文件"}</span>
             <input type="file" id="tpl-file" accept=".md,.txt,.text,.rst,.docx,.xlsx" hidden />
           </label>
-          <button class="btn btn-outline-secondary btn-sm flex-fill mb-1" id="tpl-local" type="button">从本地导入</button>
         </div>
         <div class="small ${tplChars ? "text-success" : "text-muted"}" id="tpl-status">
           ${tplChars
