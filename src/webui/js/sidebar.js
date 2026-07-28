@@ -14,6 +14,9 @@ const Sidebar = {
     const asil = c.asil_level || "ASIL B";
     const temp = (c.temperature != null) ? c.temperature : ASIL_TEMP[asil];
     const keys = c.api_keys || [];
+    const primaryKey = c.api_key || "";
+    // 过滤掉与主 Key 重复的 Key（兜底：正常情况 api_keys 不含主 Key，但以防旧数据残留）
+    const displayKeys = keys.filter((k) => k && k !== primaryKey);
     const tplAgent = this.tplAgent || AGENT_ORDER[0];
     const tplChars = Store.templates[tplAgent] || 0;
     const thinkingEnabled = c.thinking_enabled === true;
@@ -49,7 +52,7 @@ const Sidebar = {
       <div class="sidebar-section">
         <label class="section-label">⚡ 并发 Key 池（分段并发轮转，每行一个）</label>
         <textarea class="form-control form-control-sm" id="cfg-keys" rows="3"
-                  placeholder="每行一个 API Key">${UI.esc(keys.join("\n"))}</textarea>
+                  placeholder="每行一个 API Key">${UI.esc(displayKeys.join("\n"))}</textarea>
       </div>
 
       <hr/>

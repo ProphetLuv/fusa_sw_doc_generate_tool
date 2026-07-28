@@ -21,9 +21,14 @@ def _mask_api_key(key: str) -> str:
 
 @router.get("")
 def get_config():
-    """返回当前配置（api_key 明文，仅本地单用户场景）。"""
+    """返回当前配置（api_key 明文，仅本地单用户场景）。
+
+    注意：api_keys 仅存储附加 Key，不包含主 Key。
+    前端 password 输入框会自动遮蔽 api_key；textarea 中的附加 Key
+    为用户显式配置，不做后端脱敏（与 api_key 策略一致）。
+    """
     return {
-        "config": STATE.config,
+        "config": dict(STATE.config),
         "provider_base_urls": PROVIDER_BASE_URLS,
         "default_models": DEFAULT_MODELS,
     }
@@ -50,12 +55,14 @@ async def import_config(file: UploadFile = File(...)):
     if isinstance(api_keys, str):
         api_keys = [k.strip() for k in api_keys.splitlines() if k.strip()]
     primary = full.get("api_key", "")
-    all_keys = ([primary] + api_keys) if primary else api_keys
+    # api_keys 仅存储附加 Key，不与主 Key 混合（主 Key 通过 api_key 字段单独管理）
+    # 注意：导入时若 api_keys 与 api_key 重复则跳过，避免前端 textarea 暴露明文
+    final_api_keys = [k for k in api_keys if k and k != primary]
 
     STATE.update_config({
         "provider": full.get("provider", "openai"),
         "api_key": primary,
-        "api_keys": all_keys,
+        "api_keys": final_api_keys,
         "api_base": full.get("api_base") or None,
         "model": full.get("model", ""),
         "thinking_enabled": full.get("thinking_enabled", False),

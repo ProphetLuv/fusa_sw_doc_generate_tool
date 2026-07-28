@@ -231,10 +231,13 @@ def _chunked_generate(agent_type, code, ctx, cfg, engine, custom_template, colle
         collector.text = text
         return
 
-    # 多 Key 引擎池（轮转）
-    api_keys = [k for k in (cfg.get("api_keys") or []) if k]
-    if len(api_keys) > 1:
-        engine_pool = [make_engine({**cfg, "api_key": k}) for k in api_keys]
+    # 多 Key 引擎池（轮转）：合并主 Key + 附加 Key 池
+    primary_key = cfg.get("api_key", "")
+    additional_keys = [k for k in (cfg.get("api_keys") or []) if k]
+    all_keys = [primary_key] + additional_keys if primary_key else additional_keys
+    all_keys = list(dict.fromkeys([k for k in all_keys if k]))  # 去重保序
+    if len(all_keys) > 1:
+        engine_pool = [make_engine({**cfg, "api_key": k}) for k in all_keys]
     else:
         engine_pool = [engine]
 
