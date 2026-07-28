@@ -54,6 +54,18 @@ _CFG_KEYS = {
 }
 
 
+def _sync_temp_to_asil():
+    """回调：将 Temperature 同步为当前 ASIL 等级的推荐值。
+
+    用于 ASIL selectbox 的 on_change 与重置按钮的 on_click。回调在脚本重跑、
+    组件实例化之前执行，此时修改 widget key 是 Streamlit 官方支持的可靠方式，
+    能确保滑块及时跟随 ASIL 变化（不能在主体里改已实例化组件的 key）。
+    """
+    asil = st.session_state.get("widget_asil_level", "ASIL B")
+    st.session_state.cfg_temperature = _TEMP_DEFAULT.get(asil, 0.20)
+    st.session_state.widget_temperature = st.session_state.cfg_temperature
+
+
 def _init_cfg_state():
     """初始化配置持久化 session_state（仅首次）。"""
     defaults = {
@@ -217,6 +229,7 @@ def _render_project_settings():
         "ASIL 等级", options=_asil_options, index=_asil_idx,
         help="ISO 26262 安全等级，影响文档内容和方法要求",
         key="widget_asil_level",
+        on_change=_sync_temp_to_asil,
     )
 
     # 项目信息保存/清除按钮
@@ -236,18 +249,17 @@ def _render_project_settings():
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 🔧 高级选项")
 
-    # ASIL 等级变化时自动更新推荐参数
-    if "_last_asil" not in st.session_state or st.session_state._last_asil != asil_level:
-        st.session_state._last_asil = asil_level
-        st.session_state.cfg_temperature = _TEMP_DEFAULT.get(asil_level, 0.20)
+    # ASIL 与 Temperature 的联动由 ASIL selectbox 的 on_change 回调（_sync_temp_to_asil）
+    # 在组件实例化之前完成；此处仅需为首次运行初始化 widget key。
+    if "widget_temperature" not in st.session_state:
+        st.session_state.widget_temperature = st.session_state.cfg_temperature
 
     max_tokens = _TOKEN_DEFAULT.get(asil_level, 8192)
     temp_hint = _TEMP_HINT.get(asil_level, "")
 
     temperature = st.sidebar.slider(
         "Temperature",
-        min_value=0.0, max_value=1.0,
-        value=st.session_state.cfg_temperature, step=0.01,
+        min_value=0.0, max_value=1.0, step=0.01,
         help="输出随机性。0=完全确定，0.2=推荐值，0.5+=创造性增强（需求文档不建议）。",
         key="widget_temperature",
     )
@@ -261,9 +273,9 @@ def _render_project_settings():
             st.session_state.cfg_temperature = temperature
             st.toast("✅ 高级选项已保存")
     with col_clear2:
-        if st.button("🗑️ 重置", key="clear_adv_opts", use_container_width=True):
-            st.session_state.cfg_temperature = _TEMP_DEFAULT.get(asil_level, 0.20)
-            st.rerun()
+        st.button("🗑️ 重置", key="clear_adv_opts", use_container_width=True,
+                  on_click=_sync_temp_to_asil,
+                  help="将 Temperature 重置为当前 ASIL 等级的推荐值")
 
     return module_name, asil_level, max_tokens, temperature
 
