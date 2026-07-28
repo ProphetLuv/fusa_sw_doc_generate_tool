@@ -179,6 +179,17 @@ def _render_code_management(config: dict):
                 f"{len(mod_files)} 个文件 / **{lines:,}** 行"
             )
 
+        # 清除已上传内容
+        _clr_col1, _clr_col2 = st.columns([4, 1])
+        with _clr_col2:
+            st.button(
+                "🗑️ 清除已上传",
+                key="clear_uploaded_code",
+                use_container_width=True,
+                on_click=_clear_uploaded_code,
+                help="清空当前已上传/识别的所有代码与模块，恢复到未上传状态",
+            )
+
         # 管理区（默认收起）
         with st.expander("📂 代码 / 工程管理（上传 · 模块调整 · 预览）", expanded=False):
             _render_code_upload_tabs()
@@ -229,6 +240,30 @@ def _render_code_management(config: dict):
         _render_project_view()
 
 
+def _clear_uploaded_code():
+    """回调：清除当前已上传的所有代码内容与上传控件状态。
+
+    在 on_click 回调中执行（早于组件实例化）。注意：直接 pop 掉 file_uploader 的
+    widget key 只能清后端返回值，无法复位其前端已选文件；改变 key（递增 nonce）
+    才能让 Streamlit 渲染出全新的空控件。
+    """
+    # 复位代码 / 模块相关状态
+    st.session_state.project_modules = {}
+    st.session_state.module_files = {}
+    st.session_state.active_module = None
+    st.session_state.selected_modules = []
+    st.session_state.shared_code = ""
+    # 复位上传去重指纹
+    st.session_state._upload_fingerprint = None
+    st.session_state._zip_fingerprint = None
+    st.session_state._had_uploaded_files = False
+    # 递增 nonce 强制重建上传控件（文件上传/ZIP/粘贴/本地路径），彻底清空前端已选内容
+    st.session_state._upload_nonce = st.session_state.get("_upload_nonce", 0) + 1
+    for _k in ("module_selector", "batch_module_select"):
+        st.session_state.pop(_k, None)
+    sync_active_views()
+
+
 def _render_code_upload_tabs():
     """渲染代码上传的三个 Tab：文件上传 / ZIP / 粘贴。
 
@@ -239,13 +274,16 @@ def _render_code_upload_tabs():
         ["📂 上传文件", "📁 上传项目压缩包", "📀 本地路径导入", "📝 粘贴代码"]
     )
 
+    # nonce 用于「清除已上传」后强制重建各上传控件（复位其前端已选文件/文本）
+    nonce = st.session_state.get("_upload_nonce", 0)
+
     with tab_upload:
         uploaded_files = st.file_uploader(
             "上传 C/C++ 源文件",
             type=["c", "h", "cpp", "hpp", "cc", "cxx"],
             accept_multiple_files=True,
             help="支持 .c / .h / .cpp / .hpp / .cc / .cxx 文件，可多选。多文件时按目录自动识别模块。",
-            key="dash_file_upload",
+            key=f"dash_file_upload_{nonce}",
         )
         _had_files = st.session_state.get("_had_uploaded_files", False)
         _has_files_now = bool(uploaded_files)
@@ -298,7 +336,7 @@ def _render_code_upload_tabs():
 
     with tab_zip:
         st.caption("将整个项目文件夹打包为 .zip 上传，自动按目录结构识别软件模块")
-        zip_file = st.file_uploader("上传项目压缩包 (.zip)", type=["zip"], key="dash_zip_upload")
+        zip_file = st.file_uploader("上传项目压缩包 (.zip)", type=["zip"], key=f"dash_zip_upload_{nonce}")
         if zip_file is not None:
             # 指纹防重复：同一个 zip 只处理一次
             _zip_fp = f"zip:{zip_file.name}:{zip_file.size}"
@@ -342,7 +380,7 @@ def _render_code_upload_tabs():
             local_path = st.text_input(
                 "本地路径（.zip 文件或项目文件夹）",
                 placeholder=r"例如：C:\Users\Lenovo\Desktop\safetylib_1.zip 或 D:\projects\my_module",
-                key="dash_local_path",
+                key=f"dash_local_path_{nonce}",
             )
             if st.button("📥 导入", key="dash_local_import_btn", disabled=not local_path.strip()):
                 _import_local_path(local_path.strip().strip('"').strip("'"))
@@ -351,7 +389,7 @@ def _render_code_upload_tabs():
         pasted = st.text_area(
             "粘贴 C/C++ 代码", height=300,
             placeholder="// 在此粘贴嵌入式 C/C++ 代码...",
-            key="dash_paste",
+            key=f"dash_paste_{nonce}",
         )
         if pasted:
             if not _looks_like_c_code(pasted):
