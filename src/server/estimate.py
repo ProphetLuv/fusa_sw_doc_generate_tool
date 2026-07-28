@@ -144,8 +144,10 @@ def estimate_agent_total_tokens(
     # 5. 单轮输入合计（普通模式）
     input_total = code_tokens + template_tokens + knowledge_tokens + prior_docs_tokens
 
-    # 6. 预估输出（使用 Agent 推荐 max_tokens 的 70% 作为实际输出估计）
-    output_estimated = int(_AGENT_TOKEN_DEFAULT_B.get(agent_type, 8192) * 0.7)
+    # 6. 预估输出：基于代码量动态缩放（4000 token 为基准，0.3x ~ 2.0x）
+    ref = max(code_tokens, 1) if code_tokens else 1
+    scale = max(0.3, min(2.0, ref / 4000.0))
+    output_estimated = int(_AGENT_TOKEN_DEFAULT_B.get(agent_type, 8192) * 0.7 * scale)
 
     # 7. 计算调用轮次和总消耗
     if not chunked_mode:

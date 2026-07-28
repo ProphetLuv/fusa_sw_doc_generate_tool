@@ -4,7 +4,7 @@
 
 const API = {
   async _json(method, url, body, isForm) {
-    const opts = { method, headers: {} };
+    const opts = { method, headers: {}, cache: "no-store" };
     if (body !== undefined) {
       if (isForm) {
         opts.body = body; // FormData
@@ -59,14 +59,17 @@ const API = {
   // ---- 预估 ----
   estimateAgent(agent, module, chunked, review) {
     const q = new URLSearchParams();
+    q.set("_t", Date.now());
     if (module) q.set("module", module);
     if (chunked) q.set("chunked", "true");
     if (review) q.set("review", "true");
     return this.get(`/api/estimate/agent/${agent}?${q}`);
   },
   estimateBatch(module) {
-    const q = module ? `?module=${encodeURIComponent(module)}` : "";
-    return this.get(`/api/estimate/batch${q}`);
+    const q = new URLSearchParams();
+    q.set("_t", Date.now());
+    if (module) q.set("module", module);
+    return this.get(`/api/estimate/batch?${q}`);
   },
 
   // ---- 文档 ----

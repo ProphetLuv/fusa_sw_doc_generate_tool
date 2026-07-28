@@ -4,6 +4,7 @@
 
 const Sidebar = {
   el() { return document.getElementById("sidebar-body"); },
+  tplAgent: AGENT_ORDER[0],       // 模板区当前选中的 Agent（跨重渲染保留）
 
   render() {
     const c = Store.config;
@@ -13,6 +14,8 @@ const Sidebar = {
     const asil = c.asil_level || "ASIL B";
     const temp = (c.temperature != null) ? c.temperature : ASIL_TEMP[asil];
     const keys = c.api_keys || [];
+    const tplAgent = this.tplAgent || AGENT_ORDER[0];
+    const tplChars = Store.templates[tplAgent] || 0;
 
     this.el().innerHTML = `
       <div class="sidebar-section">
@@ -84,13 +87,17 @@ const Sidebar = {
       <div class="sidebar-section">
         <label class="section-label">📎 Agent 模板（可选）</label>
         <select class="form-select form-select-sm mb-2" id="tpl-agent">
-          ${AGENT_ORDER.map((a) => `<option value="${a}">${a}${Store.templates[a] ? " ✓" : ""}</option>`).join("")}
+          ${AGENT_ORDER.map((a) => `<option value="${a}" ${a === tplAgent ? "selected" : ""}>${a}${Store.templates[a] ? " ✓" : ""}</option>`).join("")}
         </select>
-        <label class="btn btn-outline-secondary btn-sm w-100 mb-0">
-          上传模板文件
-          <input type="file" id="tpl-file" hidden />
+        <label class="btn btn-outline-secondary btn-sm w-100 mb-1">
+          <span id="tpl-upload-text">${tplChars ? "重新上传模板" : "上传模板文件"}</span>
+          <input type="file" id="tpl-file" accept=".md,.txt,.text,.rst,.docx,.xlsx" hidden />
         </label>
-        <div class="form-text small" id="tpl-status"></div>
+        <div class="small ${tplChars ? "text-success" : "text-muted"}" id="tpl-status">
+          ${tplChars
+            ? `<i class="bi bi-check-circle-fill"></i> ${tplAgent} 模板已加载（${tplChars.toLocaleString()} 字符）<button type="button" class="btn btn-link btn-sm p-0 ms-1 align-baseline text-danger" id="tpl-remove">移除</button>`
+            : `${tplAgent} 暂无模板 · 支持 .md/.txt/.rst/.docx/.xlsx`}
+        </div>
       </div>
     `;
     this.bind();
@@ -166,19 +173,47 @@ const Sidebar = {
       UI.download("/api/config/export", "llm_config.json");
     });
 
-    // 模板上传
+    // 模板：切换 Agent → 刷新该 Agent 的模板状态显示
+    $("tpl-agent").addEventListener("change", (e) => {
+      this.tplAgent = e.target.value;
+      this.render();
+    });
+
+    // 模板上传（含解析中状态 + 成功/失败持久化提示）
     $("tpl-file").addEventListener("change", async (e) => {
       const f = e.target.files[0];
       if (!f) return;
       const agent = $("tpl-agent").value;
+      this.tplAgent = agent;
+      const st = $("tpl-status");
+      const txt = $("tpl-upload-text");
+      if (txt) txt.textContent = "解析中…";
+      st.className = "small text-muted";
+      st.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> 正在解析 ${UI.esc(f.name)}…`;
       try {
         const r = await API.uploadTemplate(agent, f);
         Store.templates[agent] = r.chars;
-        $("tpl-status").textContent = `${agent} 模板已加载（${r.chars} 字符）`;
-        this.render();
-        UI.toast(`${agent} 模板已加载`, "success");
-      } catch (err) { UI.toast("模板解析失败: " + err.message, "error"); }
+        UI.toast(`${agent} 模板已加载（${r.chars.toLocaleString()} 字符）`, "success");
+        this.render();   // 重渲染后由 Store.templates 驱动，状态持久可见
+      } catch (err) {
+        if (txt) txt.textContent = "上传模板文件";
+        st.className = "small text-danger";
+        st.innerHTML = `<i class="bi bi-x-circle-fill"></i> 解析失败：${UI.esc(err.message)}`;
+        UI.toast("模板解析失败: " + err.message, "error");
+      }
       e.target.value = "";
+    });
+
+    // 移除已加载模板
+    const rm = $("tpl-remove");
+    if (rm) rm.addEventListener("click", async () => {
+      const agent = this.tplAgent || $("tpl-agent").value;
+      try {
+        await API.deleteTemplate(agent);
+        delete Store.templates[agent];
+        UI.toast(`${agent} 模板已移除`, "info");
+        this.render();
+      } catch (err) { UI.toast("移除失败: " + err.message, "error"); }
     });
   },
 

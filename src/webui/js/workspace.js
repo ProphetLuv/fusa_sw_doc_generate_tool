@@ -1,4 +1,4 @@
-/* ==================================================================
+﻿/* ==================================================================
    workspace.js — 单文档工作台
    Agent 选择 · 前置文档提示 · 生成选项（分段/审查/长度）· Token 预估
    · SSE 流式生成 · Markdown 渲染 · 质量校验 · 版本 Diff · 下载 · 历史
@@ -110,7 +110,7 @@ const Workspace = {
       b.addEventListener("click", () => this.switchTab(b.dataset.rtab)));
   },
 
-  /* 目标模块 chips：切换 / 全选 / 清空（选 1 个单生成，选多个批量） */
+  /* 目标模块 chips：普通点击单选 / Ctrl+点击追加多选 / 全选 / 清空 */
   _bindModChips() {
     const setChip = (chip, on) => {
       chip.classList.toggle("active", on);
@@ -118,13 +118,25 @@ const Workspace = {
       chip.classList.toggle("btn-outline-primary", !on);
     };
     document.querySelectorAll(".ws-mod-chip").forEach((chip) =>
-      chip.addEventListener("click", () => setChip(chip, !chip.classList.contains("active"))));
+      chip.addEventListener("click", (e) => {
+        const mod = chip.dataset.mod;
+        if (e.ctrlKey || e.metaKey) {
+          // Ctrl+点击：追加/移除多选
+          setChip(chip, !chip.classList.contains("active"));
+        } else {
+          // 普通点击：单选（取消其他，仅选中当前）
+          document.querySelectorAll(".ws-mod-chip").forEach((c) => setChip(c, c === chip));
+        }
+        this.refreshEstimate(mod);
+      }));
     const all = document.getElementById("ws-mod-all");
     const none = document.getElementById("ws-mod-none");
-    if (all) all.addEventListener("click", () =>
-      document.querySelectorAll(".ws-mod-chip").forEach((c) => setChip(c, true)));
-    if (none) none.addEventListener("click", () =>
-      document.querySelectorAll(".ws-mod-chip").forEach((c) => setChip(c, false)));
+    if (all) all.addEventListener("click", () => {
+      document.querySelectorAll(".ws-mod-chip").forEach((c) => setChip(c, true)); this.refreshEstimate();
+    });
+    if (none) none.addEventListener("click", () => {
+      document.querySelectorAll(".ws-mod-chip").forEach((c) => setChip(c, false)); this.refreshEstimate();
+    });
   },
 
   _selectedModules() {
@@ -149,14 +161,22 @@ const Workspace = {
       💡 本 Agent 会自动注入前置文档：<b>${prior.join(" · ")}</b>（若已生成）。建议先完成这些文档以提高质量。</div>`;
   },
 
-  async refreshEstimate() {
+  /* forceModule 可选：传入时直接使用该模块名，跳过 DOM 查询 */
+  async refreshEstimate(forceModule) {
     const box = document.getElementById("ws-est");
     if (!box) return;
     const chunked = document.getElementById("ws-chunked").checked;
     const review = document.getElementById("ws-review").checked;
+    // 优先使用传入的模块名，否则从 DOM 芯片状态推断
+    const sel = this._selectedModules();
+    const targetModule = forceModule
+      || ((sel.length === 1) ? sel[0] : Store.activeModule);
+    const modLabel = forceModule
+      || (sel.length === 1 ? sel[0] : (sel.length > 1 ? `${sel.length} 个模块` : (Store.activeModule || "-")));
     try {
-      const r = await API.estimateAgent(Store.wsAgent, Store.activeModule, chunked, review);
+      const r = await API.estimateAgent(Store.wsAgent, targetModule, chunked, review);
       box.innerHTML = `
+        <div class="small mb-1 fw-bold">📊 预估模块：${UI.esc(modLabel)}</div>
         <table class="est-table w-100">
           <tr><td>源代码</td><td>${r.code_tokens.toLocaleString()}</td></tr>
           <tr><td>模板 + 知识库</td><td>${(r.template_tokens + r.knowledge_tokens).toLocaleString()}</td></tr>

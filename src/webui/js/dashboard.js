@@ -119,6 +119,9 @@ const Dashboard = {
       const skipped = (snap.skipped && snap.skipped.length) ? `（跳过 ${snap.skipped.length} 个非源文件）` : "";
       UI.toast(`识别出 ${snap.modules.length} 个模块${skipped}`, "success");
       await Dashboard.refreshDocsOverview();
+      Dashboard.renderModules();
+      Dashboard.renderAgents();
+      Dashboard.renderActions();
     } catch (err) {
       UI.toast("上传失败: " + err.message, "error");
     } finally {
@@ -204,6 +207,7 @@ const Dashboard = {
       this.renderModules();
       this.renderAgents();
       this.previewCode(name);
+      this.refreshEstimate();
     } catch (err) { UI.toast(err.message, "error"); }
   },
 
