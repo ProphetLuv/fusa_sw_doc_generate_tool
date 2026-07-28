@@ -2,6 +2,22 @@
    main.js — 路由与初始化
    ================================================================== */
 
+/* 根据系统配色同步 Bootstrap 主题与代码高亮主题，避免暗色下深字深底不可读 */
+function applyColorScheme() {
+  const dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  document.documentElement.setAttribute("data-bs-theme", dark ? "dark" : "light");
+  const hljsLink = document.getElementById("hljs-theme");
+  if (hljsLink) {
+    hljsLink.href = dark
+      ? "https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.9.0/styles/github-dark.min.css"
+      : "https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.9.0/styles/github.min.css";
+  }
+}
+applyColorScheme();
+if (window.matchMedia) {
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyColorScheme);
+}
+
 const Router = {
   go(view) {
     if (Store.generating && view !== Store.view) {

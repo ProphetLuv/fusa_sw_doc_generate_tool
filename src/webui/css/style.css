@@ -187,7 +187,15 @@ html, body {
   padding: 18px 22px;
   line-height: 1.7;
   overflow-x: auto;
+  color: var(--text);
 }
+.doc-render h1, .doc-render h2, .doc-render h3,
+.doc-render h4, .doc-render h5, .doc-render h6,
+.doc-render p, .doc-render li, .doc-render span,
+.doc-render strong, .doc-render em, .doc-render blockquote {
+  color: var(--text);
+}
+.doc-render a { color: var(--primary); }
 .doc-render pre {
   background: #f6f8fa;
   border-radius: 8px;
@@ -253,13 +261,20 @@ html, body {
     --border: #2c313a;
     --text: #e4e7eb;
     --text-muted: #99a1ad;
+    --primary: #7a93e8;
   }
   .doc-render pre { background: #0f1115; }
+  .doc-render pre code, .doc-render pre code.hljs { background: transparent; }
   .doc-render th { background: #23272f; }
+  .doc-render code:not(pre code) {
+    background: #23272f; color: #e0b0ff; padding: 1px 5px; border-radius: 4px;
+  }
+  .doc-render a { color: #8fb0ff; }
   .metric-card, .module-row { background: var(--panel); }
   .disclaimer-box { background: #2a2410; border-color: #5a4a10; color: #e0c060; }
   .check-pass { background: #14301a; color: #8fd99a; }
   .check-fail { background: #3a1416; color: #f0a0a0; }
   .check-warn { background: #2a2410; color: #e0c060; }
   .token-tag { background: #23272f; color: #a9b8e0; }
+  .sidebar-body::-webkit-scrollbar-thumb, .main::-webkit-scrollbar-thumb { background: #3a4049; }
 }

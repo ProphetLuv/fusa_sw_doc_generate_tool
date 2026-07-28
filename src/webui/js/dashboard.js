@@ -262,7 +262,7 @@ const Dashboard = {
     } catch (err) { UI.toast(err.message, "error"); }
   },
 
-  /* ---------------- 按需代码预览（懒加载 + 缓存） ---------------- */
+  /* ---------------- 按需代码预览（懒加载 + 缓存 + 文件级切换） ---------------- */
   async previewCode(name) {
     const box = document.getElementById("code-preview-box");
     if (!box) return;
@@ -271,6 +271,7 @@ const Dashboard = {
         <h6 class="mb-0">🔍 代码预览：${UI.esc(name)}</h6>
         <button class="btn btn-sm btn-outline-secondary" id="analyze-btn">代码分析</button>
       </div>
+      <div id="file-picker-row" class="mb-2"></div>
       <div id="code-preview-content"><div class="text-muted small">加载中...</div></div>
       <div id="analysis-box" class="mt-2"></div>
     </div></div>`;
@@ -281,12 +282,44 @@ const Dashboard = {
         const r = await API.getModuleCode(name);
         code = r.code; Store.codeCache[name] = code;
       }
-      const preview = code.length > 20000 ? code.slice(0, 20000) + "\n... (已截断)" : code;
-      const cc = document.getElementById("code-preview-content");
-      cc.innerHTML = `<pre class="doc-render" style="max-height:360px"><code class="language-c"></code></pre>`;
-      cc.querySelector("code").textContent = preview;
-      if (window.hljs) hljs.highlightElement(cc.querySelector("code"));
+      const files = this._splitModuleFiles(code);
+      const render = (text) => {
+        const cc = document.getElementById("code-preview-content");
+        if (!cc) return;
+        const preview = text.length > 20000 ? text.slice(0, 20000) + "\n... (已截断)" : text;
+        cc.innerHTML = `<pre class="doc-render" style="max-height:360px"><code class="language-c"></code></pre>`;
+        cc.querySelector("code").textContent = preview;
+        if (window.hljs) hljs.highlightElement(cc.querySelector("code"));
+      };
+      const row = document.getElementById("file-picker-row");
+      if (files.length > 1) {
+        row.innerHTML = `<div class="input-group input-group-sm">
+          <span class="input-group-text">📄 文件</span>
+          <select class="form-select" id="file-picker">
+            <option value="__all__">全部（合并视图 · ${files.length} 个文件）</option>
+            ${files.map((f, i) => `<option value="${i}">${UI.esc(f.path)}</option>`).join("")}
+          </select>
+        </div>`;
+        document.getElementById("file-picker").addEventListener("change", (e) => {
+          const v = e.target.value;
+          render(v === "__all__" ? code : (files[Number(v)] ? files[Number(v)].content : ""));
+        });
+      } else {
+        row.innerHTML = "";
+      }
+      render(code);
     } catch (err) { UI.toast(err.message, "error"); }
+  },
+
+  /* 将模块合并代码按 `// ===== path =====` 分隔符切分为单文件列表 */
+  _splitModuleFiles(code) {
+    if (!code) return [];
+    const parts = code.split(/\/\/ ===== (.+?) =====\n/);
+    const files = [];
+    for (let i = 1; i < parts.length - 1; i += 2) {
+      files.push({ path: (parts[i] || "").trim(), content: (parts[i + 1] || "").replace(/\s+$/, "") });
+    }
+    return files;
   },
 
   async analyzeCode(name) {
