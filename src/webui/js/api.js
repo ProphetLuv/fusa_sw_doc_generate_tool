@@ -36,13 +36,8 @@ const API = {
   importConfig(file) { const fd = new FormData(); fd.append("file", file); return this.postForm("/api/config/import", fd); },
 
   // ---- 上传 ----
-  uploadFiles(files) {
-    const fd = new FormData();
-    for (const f of files) fd.append("files", f);
-    return this.postForm("/api/upload/files", fd);
-  },
-  uploadZip(file) { const fd = new FormData(); fd.append("file", file); return this.postForm("/api/upload/zip", fd); },
   uploadLocalPath(path) { return this.post("/api/upload/local-path", { path }); },
+  uploadUrl(url) { return this.post("/api/upload/url", { url }); },
   uploadPaste(code, module_name) { return this.post("/api/upload/paste", { code, module_name }); },
   pickLocalPath(mode) { return this.get(`/api/upload/pick?mode=${mode}`); },
   clearUpload() { return this.del("/api/upload"); },

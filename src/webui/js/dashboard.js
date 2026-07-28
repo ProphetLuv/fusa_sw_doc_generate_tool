@@ -1,6 +1,6 @@
 /* ==================================================================
    dashboard.js — 工程总览视图
-   上传（文件/ZIP/本地/粘贴）· 模块管理 · Token 预估 · 7 卡片
+   上传（本地路径/网络URL/粘贴）· 模块管理 · Token 预估 · 7 卡片
    · 一键批量生成（SSE）· 打包下载 · 跨文档校验 · 清空
    ================================================================== */
 
@@ -18,8 +18,7 @@ const Dashboard = {
         <h6 class="card-title">📥 代码上传</h6>
         <ul class="nav nav-tabs mb-3" id="upload-tabs">
           <li class="nav-item"><button class="nav-link active" data-up="local">本地路径（建议）</button></li>
-          <li class="nav-item"><button class="nav-link" data-up="files">多文件</button></li>
-          <li class="nav-item"><button class="nav-link" data-up="zip">ZIP 包</button></li>
+          <li class="nav-item"><button class="nav-link" data-up="url">网络路径</button></li>
           <li class="nav-item"><button class="nav-link" data-up="paste">粘贴代码</button></li>
         </ul>
         <div id="upload-panels"></div>
@@ -60,28 +59,16 @@ const Dashboard = {
   /* ---------------- 上传面板 ---------------- */
   renderUploadPanel(kind) {
     const p = document.getElementById("upload-panels");
-    if (kind === "files") {
-      p.innerHTML = `
-        <input type="file" class="form-control" id="up-files" multiple
-               accept=".c,.h,.cpp,.hpp,.cc,.cxx" />
-        <div class="form-text">支持多选 .c/.h/.cpp 等源文件</div>`;
-      document.getElementById("up-files").addEventListener("change", (e) => {
-        if (e.target.files.length) this.doUpload(() => API.uploadFiles(e.target.files));
-      });
-    } else if (kind === "zip") {
-      p.innerHTML = `<input type="file" class="form-control" id="up-zip" accept=".zip" />`;
-      document.getElementById("up-zip").addEventListener("change", (e) => {
-        if (e.target.files[0]) this.doUpload(() => API.uploadZip(e.target.files[0]));
-      });
-    } else if (kind === "local") {
+    if (kind === "local") {
       p.innerHTML = `
         <div class="input-group">
-          <input type="text" class="form-control" id="up-local" placeholder="本机 .zip 或文件夹绝对路径" />
+          <input type="text" class="form-control" id="up-local" placeholder="本机文件、.zip 或文件夹路径" />
+          <button class="btn btn-outline-secondary" id="up-pick-file">选文件</button>
           <button class="btn btn-outline-secondary" id="up-pick-zip">选 ZIP</button>
           <button class="btn btn-outline-secondary" id="up-pick-dir">选文件夹</button>
           <button class="btn btn-primary" id="up-local-go">导入</button>
         </div>
-        <div class="form-text">仅限本机运行场景（弹出系统文件对话框）</div>`;
+        <div class="form-text">支持单个 .c/.h/.cpp 源文件、ZIP 压缩包、或文件夹（递归扫描）。弹出系统文件对话框，不走浏览器。</div>`;
       const pick = async (mode) => {
         try {
           UI.overlay(true, "等待选择...");
@@ -90,11 +77,24 @@ const Dashboard = {
           if (r.path) { document.getElementById("up-local").value = r.path; }
         } catch (err) { UI.overlay(false); UI.toast(err.message, "error"); }
       };
+      document.getElementById("up-pick-file").addEventListener("click", () => pick("file"));
       document.getElementById("up-pick-zip").addEventListener("click", () => pick("zip"));
       document.getElementById("up-pick-dir").addEventListener("click", () => pick("dir"));
       document.getElementById("up-local-go").addEventListener("click", () => {
         const path = document.getElementById("up-local").value.trim();
         if (path) this.doUpload(() => API.uploadLocalPath(path));
+      });
+    } else if (kind === "url") {
+      p.innerHTML = `
+        <div class="input-group">
+          <input type="text" class="form-control" id="up-url" placeholder="https://example.com/project.zip 或 .../main.c" />
+          <button class="btn btn-primary" id="up-url-go">导入</button>
+        </div>
+        <div class="form-text">支持 HTTP/HTTPS URL，指向 .zip 压缩包或单个 C/C++ 源文件</div>`;
+      document.getElementById("up-url-go").addEventListener("click", () => {
+        const url = document.getElementById("up-url").value.trim();
+        if (!url) { UI.toast("请输入 URL", "warn"); return; }
+        this.doUpload(() => API.uploadUrl(url));
       });
     } else if (kind === "paste") {
       p.innerHTML = `
@@ -350,21 +350,24 @@ const Dashboard = {
         Store.wsAgent = b.dataset.agentGo;
         Router.go("workspace");
       }));
+    box.querySelectorAll("[data-agent-view]").forEach((b) =>
+      b.addEventListener("click", () => this.viewDoc(b.dataset.agentView)));
   },
 
   agentCard(a) {
     const m = AGENT_META[a];
-    const activeObj = Store.getActiveModuleObj();
-    const done = activeObj && Store.docsOverview[Store.activeModule] ? "" : "";
+    const generated = Store.activeModuleDocs.includes(a);
     return `
     <div class="agent-card" style="background:${m.color}">
+      ${generated ? '<span class="agent-done-badge">✓ 已生成</span>' : ''}
       <div class="agent-icon">${m.icon}</div>
       <div class="agent-name">${m.name}</div>
       <div class="agent-full">${m.full}</div>
       <div class="agent-desc">${m.desc}</div>
       <div class="agent-foot">
         <span class="agent-badge">${a}</span>
-        <button class="btn btn-sm btn-light" data-agent-go="${a}">生成 →</button>
+        ${generated ? `<button class="btn btn-sm btn-success" data-agent-view="${a}">👁 查看</button>` : ''}
+        <button class="btn btn-sm btn-light" data-agent-go="${a}">${generated ? '重新生成' : '生成 →'}</button>
       </div>
     </div>`;
   },
@@ -510,6 +513,7 @@ const Dashboard = {
     try {
       const r = await API.listDocs(Store.activeModule);
       Store.docsOverview = r.overview || {};
+      Store.activeModuleDocs = (r.docs || []).map((d) => d.agent);
     } catch (err) { /* ignore */ }
   },
 
@@ -543,5 +547,50 @@ const Dashboard = {
       await this.reloadModulesAndDocs();
       UI.toast("已清空文档", "success");
     } catch (err) { UI.toast(err.message, "error"); }
+  },
+
+  /* ---------------- 文档预览模态框 ---------------- */
+  async viewDoc(agent) {
+    const mod = Store.activeModule;
+    if (!mod) { UI.toast("无活动模块", "warn"); return; }
+    // 创建模态框
+    let overlay = document.getElementById("doc-preview-overlay");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.id = "doc-preview-overlay";
+      overlay.className = "doc-preview-overlay";
+      document.body.appendChild(overlay);
+    }
+    overlay.innerHTML = `
+      <div class="doc-preview-modal">
+        <div class="doc-preview-header">
+          <h6 class="mb-0">${AGENT_META[agent]?.icon || '📄'} ${UI.esc(mod)} — ${agent} 文档预览</h6>
+          <div class="d-flex gap-2">
+            <button class="btn btn-sm btn-outline-primary" id="dp-word">⬇ Word</button>
+            ${agent === 'FMEA' ? '<button class="btn btn-sm btn-outline-success" id="dp-excel">⬇ Excel</button>' : ''}
+            <button class="btn btn-sm btn-outline-secondary" id="dp-close">✖ 关闭</button>
+          </div>
+        </div>
+        <div class="doc-preview-body" id="dp-body"><div class="text-muted">加载中...</div></div>
+      </div>`;
+    overlay.style.display = "flex";
+    document.getElementById("dp-close").addEventListener("click", () => { overlay.style.display = "none"; });
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.style.display = "none"; });
+    document.getElementById("dp-word").addEventListener("click", () => {
+      window.open(`/api/export/word?module=${encodeURIComponent(mod)}&agent=${agent}`, "_blank");
+    });
+    const excelBtn = document.getElementById("dp-excel");
+    if (excelBtn) excelBtn.addEventListener("click", () => {
+      window.open(`/api/export/excel?module=${encodeURIComponent(mod)}&agent=${agent}`, "_blank");
+    });
+    // 加载文档内容
+    try {
+      const r = await API.getDoc(mod, agent);
+      const body = document.getElementById("dp-body");
+      body.innerHTML = '<div class="doc-render"></div>';
+      renderMarkdown(body.querySelector(".doc-render"), r.content);
+    } catch (err) {
+      document.getElementById("dp-body").innerHTML = `<div class="alert alert-warning">${UI.esc(err.message)}</div>`;
+    }
   },
 };

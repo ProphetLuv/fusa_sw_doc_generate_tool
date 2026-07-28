@@ -42,6 +42,10 @@ class LocalPathRequest(BaseModel):
     path: str
 
 
+class UrlRequest(BaseModel):
+    url: str
+
+
 class MergeRequest(BaseModel):
     names: List[str]
     new_name: str

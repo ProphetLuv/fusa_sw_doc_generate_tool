@@ -9,6 +9,7 @@ import sys
 import subprocess
 import asyncio
 import logging
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import Response
@@ -137,7 +138,7 @@ def export_word(module: str, agent: str):
     return Response(
         content=data,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{module}_{agent}.docx"'},
+        headers={"Content-Disposition": f"attachment; filename=\"{module}_{agent}.docx\"; filename*=UTF-8''{quote(f'{module}_{agent}.docx')}"},
     )
 
 
@@ -151,7 +152,7 @@ def export_excel(module: str, agent: str = "FMEA"):
     return Response(
         content=data,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{module}_FMEA.xlsx"'},
+        headers={"Content-Disposition": f"attachment; filename=\"{module}_FMEA.xlsx\"; filename*=UTF-8''{quote(f'{module}_FMEA.xlsx')}"},
     )
 
 
@@ -191,7 +192,7 @@ def export_zip():
                         pass
     return Response(
         content=buf.getvalue(), media_type="application/zip",
-        headers={"Content-Disposition": 'attachment; filename="全部文档.zip"'},
+        headers={"Content-Disposition": f"attachment; filename=\"all_docs.zip\"; filename*=UTF-8''{quote('全部文档.zip')}"},
     )
 
 

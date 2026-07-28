@@ -74,14 +74,18 @@ async def import_config(file: UploadFile = File(...)):
 
 @router.get("/export")
 def export_config():
-    """导出当前 LLM 连接配置（API Key 脱敏）。"""
+    """导出当前 LLM 连接配置（明文，供导入恢复使用）。"""
     cfg = STATE.config
     provider = cfg.get("provider", "openai")
     export = {
         "provider": provider,
-        "api_key": _mask_api_key(cfg.get("api_key", "")),
+        "api_key": cfg.get("api_key", ""),
+        "api_keys": cfg.get("api_keys", []),
         "api_base": cfg.get("api_base") or "",
         "model": cfg.get("model") or DEFAULT_MODELS.get(provider, "gpt-4o"),
+        "thinking_enabled": cfg.get("thinking_enabled", False),
+        "thinking_intensity": cfg.get("thinking_intensity", 5),
+        "background_prompt": cfg.get("background_prompt", ""),
     }
     return JSONResponse(
         content=export,

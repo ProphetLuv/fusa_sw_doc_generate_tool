@@ -10,6 +10,9 @@ import io
 import os
 import re
 import zipfile
+from urllib.parse import urlparse
+
+import httpx
 
 from module_detector import detect_modules, build_module_code
 
@@ -83,19 +86,31 @@ def extract_files_from_zip(raw: bytes) -> list:
 
 
 def load_files_from_local_path(path: str) -> list:
-    """从本地路径（zip 文件或文件夹）加载 C/C++ 源文件。
+    """从本地路径（zip 文件、文件夹、或单个源文件）加载 C/C++ 源文件。
 
     服务器直接读磁盘，不经过浏览器上传通道。
     """
     if not os.path.exists(path):
         raise UploadError(f"路径不存在：{path}")
 
-    # zip 文件
+    # 单个文件
     if os.path.isfile(path):
-        if not path.lower().endswith(".zip"):
-            raise UploadError("仅支持 .zip 文件或文件夹路径")
-        with open(path, "rb") as f:
-            return extract_files_from_zip(f.read())
+        ext = os.path.splitext(path)[1].lower()
+        if path.lower().endswith(".zip"):
+            with open(path, "rb") as f:
+                return extract_files_from_zip(f.read())
+        if ext not in CPP_EXTENSIONS:
+            raise UploadError(f"不支持的文件类型：{ext}（支持 {', '.join(sorted(CPP_EXTENSIONS))} 或 .zip）")
+        try:
+            if os.path.getsize(path) > MAX_FILE_BYTES:
+                raise UploadError("文件过大（>500KB）")
+            with open(path, "rb") as f:
+                text = f.read().decode("utf-8", errors="replace")
+        except OSError as e:
+            raise UploadError(f"读取文件失败：{e}")
+        if not text.strip():
+            raise UploadError("文件内容为空")
+        return [(os.path.basename(path), text)]
 
     # 文件夹：递归扫描
     file_tuples = []
@@ -119,6 +134,48 @@ def load_files_from_local_path(path: str) -> list:
             rel = os.path.relpath(fp, path).replace("\\", "/")
             file_tuples.append((rel, text))
     return file_tuples
+
+
+def load_files_from_url(url: str) -> list:
+    """从网络 URL 下载文件（.zip 或单个源文件），返回 [(rel_path, content), ...]。"""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise UploadError(f"不支持的协议：{parsed.scheme}（仅支持 http/https）")
+
+    try:
+        resp = httpx.get(url, follow_redirects=True, timeout=60.0)
+        resp.raise_for_status()
+    except httpx.TimeoutException:
+        raise UploadError("下载超时（60s），请检查网络或 URL 是否可达")
+    except httpx.HTTPStatusError as e:
+        raise UploadError(f"下载失败：HTTP {e.response.status_code}")
+    except httpx.RequestError as e:
+        raise UploadError(f"网络错误：{e}")
+
+    raw = resp.content
+    if len(raw) > MAX_FILE_BYTES * 10:  # ZIP 允许更大
+        raise UploadError("下载内容过大（>5MB）")
+
+    # 判断是 ZIP 还是单文件
+    filename = os.path.basename(parsed.path) or "download"
+    content_type = resp.headers.get("content-type", "")
+    is_zip = (
+        filename.lower().endswith(".zip")
+        or "zip" in content_type
+        or raw[:4] == b"PK\x03\x04"
+    )
+
+    if is_zip:
+        return extract_files_from_zip(raw)
+
+    # 单文件
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in CPP_EXTENSIONS:
+        raise UploadError(f"URL 指向的文件类型不支持：{ext or '未知'}（支持 {', '.join(sorted(CPP_EXTENSIONS))} 或 .zip）")
+    text = raw.decode("utf-8", errors="replace")
+    if not text.strip():
+        raise UploadError("下载的文件内容为空")
+    return [(filename, text)]
 
 
 def build_modules_from_file_tuples(file_tuples: list) -> tuple:

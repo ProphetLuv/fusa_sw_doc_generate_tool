@@ -51,6 +51,7 @@ const Store = {
   defaultModuleName: "目标模块",
 
   docsOverview: {},               // {module: doc_count}
+  activeModuleDocs: [],           // 活动模块已生成的 agent 列表 ["SRS","SAD",...]
   templates: {},                  // {agent: chars}
 
   // workspace 当前 agent

@@ -62,6 +62,7 @@ async function bootstrapApp() {
   try {
     const docs = await API.listDocs(Store.activeModule);
     Store.docsOverview = docs.overview || {};
+    Store.activeModuleDocs = (docs.docs || []).map((d) => d.agent);
   } catch (err) { /* ignore */ }
 
   // 首屏渲染
