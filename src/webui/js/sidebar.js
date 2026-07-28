@@ -225,27 +225,56 @@ const Sidebar = {
       this.render();
     });
 
-    // 模板上传（含解析中状态 + 成功/失败持久化提示）
+    // 模板上传（含解析中状态 + 超时控制 + 文件大小提示 + 连接预检）
     $("tpl-file").addEventListener("change", async (e) => {
       const f = e.target.files[0];
       if (!f) return;
+
+      // 前端文件大小预检（>50MB 直接拒绝，避免无意义的上传）
+      const MAX_SIZE = 50 * 1024 * 1024;
+      if (f.size > MAX_SIZE) {
+        const st = $("tpl-status");
+        st.className = "small text-danger";
+        st.innerHTML = `<i class="bi bi-x-circle-fill"></i> 文件过大（${(f.size / 1024 / 1024).toFixed(1)} MB），上限 50 MB`;
+        UI.toast("模板文件过大，请压缩后上传", "error");
+        e.target.value = "";
+        return;
+      }
+
       const agent = $("tpl-agent").value;
       this.tplAgent = agent;
       const st = $("tpl-status");
       const txt = $("tpl-upload-text");
+      const sizeStr = f.size > 1024 * 1024
+        ? `${(f.size / 1024 / 1024).toFixed(1)} MB`
+        : `${(f.size / 1024).toFixed(0)} KB`;
       if (txt) txt.textContent = "解析中…";
       st.className = "small text-muted";
-      st.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> 正在解析 ${UI.esc(f.name)}…`;
+      st.innerHTML = `<span class="spinner-border spinner-border-sm" role="status"></span> 正在解析 ${UI.esc(f.name)}（${sizeStr}）…`;
+
+      // AbortController 超时控制（120 秒，大文件 Word 解析可能较慢）
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 120000);
       try {
-        const r = await API.uploadTemplate(agent, f);
+        const r = await API.uploadTemplate(agent, f, ctrl.signal);
+        clearTimeout(timer);
         Store.templates[agent] = r.chars;
         UI.toast(`${agent} 模板已加载（${r.chars.toLocaleString()} 字符）`, "success");
-        this.render();   // 重渲染后由 Store.templates 驱动，状态持久可见
+        this.render();
       } catch (err) {
+        clearTimeout(timer);
         if (txt) txt.textContent = "上传模板文件";
         st.className = "small text-danger";
-        st.innerHTML = `<i class="bi bi-x-circle-fill"></i> 解析失败：${UI.esc(err.message)}`;
-        UI.toast("模板解析失败: " + err.message, "error");
+        let msg;
+        if (err.name === "AbortError") {
+          msg = "解析超时，请尝试压缩文件或拆分后上传";
+        } else if (err.message && err.message.includes("Failed to fetch")) {
+          msg = "无法连接服务器，请确认服务已启动后刷新页面";
+        } else {
+          msg = UI.esc(err.message || "未知错误");
+        }
+        st.innerHTML = `<i class="bi bi-x-circle-fill"></i> 解析失败：${msg}`;
+        UI.toast("模板解析失败: " + msg, "error");
       }
       e.target.value = "";
     });

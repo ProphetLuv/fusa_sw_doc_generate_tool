@@ -5,6 +5,8 @@ import io
 import time
 import difflib
 import zipfile
+import asyncio
+import logging
 
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import Response
@@ -18,6 +20,7 @@ from validator import validate_cross_document_traceability
 from template_parser import parse_template, get_supported_extensions
 
 router = APIRouter(tags=["docs"])
+_logger = logging.getLogger("docs")
 
 
 # ======================================================================
@@ -210,20 +213,28 @@ def list_templates():
 @router.post("/api/templates/{agent}")
 async def upload_template(agent: str, file: UploadFile = File(...)):
     agent = agent.upper()
+
+    # 文件大小预检（防止超大文件 OOM / 超长解析阻塞）
+    MAX_SIZE = 50 * 1024 * 1024  # 50 MB
     raw = await file.read()
+    size_mb = len(raw) / (1024 * 1024)
+    if len(raw) > MAX_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"模板文件过大（{size_mb:.1f} MB），上限 {MAX_SIZE // (1024 * 1024)} MB")
 
-    class _Wrap:
-        def __init__(self, name, data):
-            self.name = name
-            self._data = data
-        def read(self):
-            return self._data
+    # 使用 BytesIO 避免二次拷贝，在线程池中解析避免阻塞事件循环
+    buf = io.BytesIO(raw)
+    buf.name = file.filename or "template.bin"
 
-    parsed = parse_template(_Wrap(file.filename, raw))
+    _logger.info("开始解析模板: agent=%s file=%s size=%.2f MB", agent, file.filename, size_mb)
+    parsed = await asyncio.to_thread(parse_template, buf)
     if not parsed:
+        _logger.warning("模板解析返回空: agent=%s file=%s", agent, file.filename)
         raise HTTPException(status_code=400, detail=f"模板解析失败: {file.filename}")
+    _logger.info("模板解析成功: agent=%s chars=%d", agent, len(parsed))
     STATE.agent_templates[agent] = parsed
-    return {"agent": agent, "chars": len(parsed), "preview": parsed[:3000]}
+    return {"agent": agent, "chars": len(parsed), "size_mb": round(size_mb, 2), "preview": parsed[:3000]}
 
 
 @router.delete("/api/templates/{agent}")

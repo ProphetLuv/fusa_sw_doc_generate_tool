@@ -5,8 +5,11 @@
 提取纯文本内容供 Prompt 模板引用。
 """
 
-import io
+import logging
+import traceback
 from typing import Optional
+
+_logger = logging.getLogger("template_parser")
 
 
 def parse_template(uploaded_file) -> Optional[str]:
@@ -19,7 +22,7 @@ def parse_template(uploaded_file) -> Optional[str]:
     - .xlsx → 使用 openpyxl 提取所有 Sheet 的表格内容
 
     Args:
-        uploaded_file: Streamlit UploadedFile 对象
+        uploaded_file: 类文件对象，需支持 .name 属性和 .read() 方法（BytesIO / UploadFile）
 
     Returns:
         模板文本内容；解析失败返回 None
@@ -28,37 +31,38 @@ def parse_template(uploaded_file) -> Optional[str]:
         return None
 
     filename = uploaded_file.name.lower()
-    raw = uploaded_file.read()
 
     # ---- 纯文本类格式 ----
     if filename.endswith((".md", ".txt", ".text", ".rst")):
+        raw = uploaded_file.read()
         try:
             return raw.decode("utf-8")
         except UnicodeDecodeError:
-            # 尝试 GBK 回退（部分中文 Windows 环境）
             try:
                 return raw.decode("gbk")
             except UnicodeDecodeError:
                 return None
 
-    # ---- Word 格式 ----
+    # ---- Word / Excel 格式（传入类文件对象，避免二次内存拷贝）----
     if filename.endswith(".docx"):
-        return _parse_docx(raw)
+        return _parse_docx(uploaded_file)
 
-    # ---- Excel 格式 ----
     if filename.endswith(".xlsx"):
-        return _parse_excel(raw)
+        return _parse_excel(uploaded_file)
 
-    # ---- 不支持的格式 ----
     return None
 
 
-def _parse_docx(raw: bytes) -> Optional[str]:
-    """从 .docx 字节流中提取段落和表格文本。"""
+def _parse_docx(file_obj) -> Optional[str]:
+    """从 .docx 文件对象（BytesIO / 文件路径）中提取段落和表格文本。"""
     try:
         from docx import Document
+    except ImportError:
+        _logger.error("python-docx 未安装，无法解析 .docx 模板")
+        return None
 
-        doc = Document(io.BytesIO(raw))
+    try:
+        doc = Document(file_obj)
         parts = []
 
         # 提取段落
@@ -69,26 +73,38 @@ def _parse_docx(raw: bytes) -> Optional[str]:
 
         # 提取表格（转为简易 Markdown 表格）
         for table in doc.tables:
-            rows = []
-            for row in table.rows:
-                cells = [cell.text.strip().replace("\n", " ") for cell in row.cells]
-                rows.append(cells)
+            try:
+                rows = []
+                for row in table.rows:
+                    cells = [cell.text.strip().replace("\n", " ") for cell in row.cells]
+                    rows.append(cells)
 
-            if rows:
-                # 转为 Markdown 表格格式
+                if not rows:
+                    continue
+
                 header = rows[0]
+                if not header or all(not c for c in header):
+                    continue
+
                 parts.append("| " + " | ".join(header) + " |")
                 parts.append("| " + " | ".join(["---"] * len(header)) + " |")
                 for row_data in rows[1:]:
-                    # 补齐列数
+                    # 补齐列数（处理合并单元格导致的列数不一致）
                     while len(row_data) < len(header):
                         row_data.append("")
                     parts.append("| " + " | ".join(row_data[: len(header)]) + " |")
                 parts.append("")  # 表格后空行
+            except Exception:
+                _logger.warning("解析表格时出错，已跳过:\n%s", traceback.format_exc())
+                continue
 
-        return "\n".join(parts) if parts else None
+        result = "\n".join(parts) if parts else None
+        if result:
+            _logger.info("docx 解析成功: %d 段落/表格项, %d 字符", len(parts), len(result))
+        return result
 
     except Exception:
+        _logger.error("docx 解析失败:\n%s", traceback.format_exc())
         return None
 
 
@@ -97,15 +113,19 @@ def get_supported_extensions() -> list:
     return ["md", "txt", "text", "rst", "docx", "xlsx"]
 
 
-def _parse_excel(raw: bytes) -> Optional[str]:
+def _parse_excel(file_obj) -> Optional[str]:
     """
-    从 .xlsx 字节流中提取所有 Sheet 的表格内容。
+    从 .xlsx 文件对象（BytesIO / 文件路径）中提取所有 Sheet 的表格内容。
     每个 Sheet 以 Sheet 名作为标题，表格内容转为 Markdown 格式。
     """
     try:
         from openpyxl import load_workbook
+    except ImportError:
+        _logger.error("openpyxl 未安装，无法解析 .xlsx 模板")
+        return None
 
-        wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+    try:
+        wb = load_workbook(file_obj, read_only=True, data_only=True)
         parts = []
 
         for sheet_name in wb.sheetnames:
@@ -143,7 +163,11 @@ def _parse_excel(raw: bytes) -> Optional[str]:
             parts.append("")  # Sheet 之间空行
 
         wb.close()
-        return "\n".join(parts) if parts else None
+        result = "\n".join(parts) if parts else None
+        if result:
+            _logger.info("xlsx 解析成功: %d sheets, %d 字符", len(wb.sheetnames), len(result))
+        return result
 
     except Exception:
+        _logger.error("xlsx 解析失败:\n%s", traceback.format_exc())
         return None

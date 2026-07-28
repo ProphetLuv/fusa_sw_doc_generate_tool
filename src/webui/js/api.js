@@ -3,8 +3,9 @@
    ================================================================== */
 
 const API = {
-  async _json(method, url, body, isForm) {
+  async _json(method, url, body, isForm, signal) {
     const opts = { method, headers: {}, cache: "no-store" };
+    if (signal) opts.signal = signal;
     if (body !== undefined) {
       if (isForm) {
         opts.body = body; // FormData
@@ -27,7 +28,7 @@ const API = {
   put(url, body) { return this._json("PUT", url, body); },
   post(url, body) { return this._json("POST", url, body); },
   del(url, body) { return this._json("DELETE", url, body); },
-  postForm(url, formData) { return this._json("POST", url, formData, true); },
+  postForm(url, formData, signal) { return this._json("POST", url, formData, true, signal); },
 
   // ---- 配置 ----
   getConfig() { return this.get("/api/config"); },
@@ -82,7 +83,7 @@ const API = {
 
   // ---- 模板 ----
   listTemplates() { return this.get("/api/templates"); },
-  uploadTemplate(agent, file) { const fd = new FormData(); fd.append("file", file); return this.postForm(`/api/templates/${agent}`, fd); },
+  uploadTemplate(agent, file, signal) { const fd = new FormData(); fd.append("file", file); return this.postForm(`/api/templates/${agent}`, fd, signal); },
   deleteTemplate(agent) { return this.del(`/api/templates/${agent}`); },
 
   // ---- 生成取消 ----
