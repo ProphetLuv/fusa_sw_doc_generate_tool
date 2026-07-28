@@ -7,6 +7,8 @@ import streamlit as st
 import time
 import io
 import os
+import sys
+import subprocess
 import zipfile
 
 from llm_engine import estimate_tokens, estimate_cost
@@ -233,7 +235,9 @@ def _render_code_upload_tabs():
     使用 widget 返回值处理上传（Streamlit 官方推荐模式，兼容所有版本）。
     处理成功后先显示即时反馈，再尝试 st.rerun() 刷新布局。
     """
-    tab_upload, tab_zip, tab_paste = st.tabs(["📂 上传文件", "📁 上传项目压缩包", "📝 粘贴代码"])
+    tab_upload, tab_zip, tab_local, tab_paste = st.tabs(
+        ["📂 上传文件", "📁 上传项目压缩包", "📀 本地路径导入", "📝 粘贴代码"]
+    )
 
     with tab_upload:
         uploaded_files = st.file_uploader(
@@ -318,6 +322,30 @@ def _render_code_upload_tabs():
                     st.error(f"❌ ZIP 解析异常：{e}")
         elif st.session_state.get("_zip_fingerprint"):
             st.session_state._zip_fingerprint = None
+
+    with tab_local:
+        st.caption("点击按钮弹出 Windows 文件选择对话框，服务器直接从磁盘读取（不经过浏览器上传，适用于浏览器上传受限的环境）")
+        pick_col1, pick_col2 = st.columns(2)
+        picked_path = None
+        with pick_col1:
+            if st.button("📂 选择 ZIP 文件…", key="dash_local_pick_zip", use_container_width=True):
+                picked_path = _pick_local_path("zip")
+        with pick_col2:
+            if st.button("📁 选择项目文件夹…", key="dash_local_pick_dir", use_container_width=True):
+                picked_path = _pick_local_path("dir")
+        st.caption("💡 对话框由本机服务进程弹出，若未看到请检查是否被其他窗口遮挡")
+
+        if picked_path:
+            _import_local_path(picked_path)
+
+        with st.expander("⌨️ 手动输入路径（备用）"):
+            local_path = st.text_input(
+                "本地路径（.zip 文件或项目文件夹）",
+                placeholder=r"例如：C:\Users\Lenovo\Desktop\safetylib_1.zip 或 D:\projects\my_module",
+                key="dash_local_path",
+            )
+            if st.button("📥 导入", key="dash_local_import_btn", disabled=not local_path.strip()):
+                _import_local_path(local_path.strip().strip('"').strip("'"))
 
     with tab_paste:
         pasted = st.text_area(
@@ -471,6 +499,113 @@ def _looks_like_c_code(text: str) -> bool:
     sample = text[:3000]
     hits = sum(1 for ind in strong_indicators if ind in sample)
     return hits >= 2
+
+
+_TK_PICKER_SCRIPT = """
+import sys
+import tkinter as tk
+from tkinter import filedialog
+root = tk.Tk()
+root.withdraw()
+root.attributes("-topmost", True)
+root.update()
+if sys.argv[1] == "zip":
+    path = filedialog.askopenfilename(
+        title="\u9009\u62e9\u9879\u76ee\u538b\u7f29\u5305",
+        filetypes=[("ZIP \u538b\u7f29\u5305", "*.zip"), ("\u6240\u6709\u6587\u4ef6", "*.*")],
+    )
+else:
+    path = filedialog.askdirectory(title="\u9009\u62e9\u9879\u76ee\u6587\u4ef6\u5939")
+root.destroy()
+sys.stdout.write(path or "")
+"""
+
+
+def _pick_local_path(mode: str):
+    """在服务器本机弹出 Windows 原生文件/文件夹选择对话框。
+
+    用子进程跑 tkinter，避免在 Streamlit 脚本线程中创建 Tk 实例的线程问题。
+    返回选中的路径，未选择/取消时返回 None。
+    """
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", _TK_PICKER_SCRIPT, mode],
+            capture_output=True, text=True, timeout=300,
+        )
+        path = (result.stdout or "").strip()
+        return path or None
+    except subprocess.TimeoutExpired:
+        st.warning("⚠️ 文件选择对话框超时未操作，已取消")
+        return None
+    except Exception as e:
+        st.error(f"❌ 无法弹出文件选择对话框：{e}，请改用下方手动输入路径")
+        return None
+
+
+def _import_local_path(path: str):
+    """从本地路径导入源文件并执行模块识别，成功后 rerun。"""
+    try:
+        file_tuples = _load_files_from_local_path(path)
+        if file_tuples:
+            _apply_module_detection(file_tuples)
+            n_mods = len(st.session_state.project_modules)
+            st.success(
+                f"✅ 成功导入 {len(file_tuples)} 个源文件，"
+                f"识别出 {n_mods} 个软件模块"
+            )
+            time.sleep(0.3)
+            st.rerun()
+        # file_tuples 为空时，_load_files_from_local_path 内部已给出错误提示
+    except Exception as e:
+        st.error(f"❌ 本地路径导入异常：{e}")
+
+
+def _load_files_from_local_path(path: str) -> list:
+    """从本地路径（zip 文件或文件夹）加载 C/C++ 源文件，返回 [(rel_path, content), ...]。
+
+    服务器直接读磁盘，不经过浏览器上传通道。
+    """
+    CPP_EXTENSIONS = {".c", ".h", ".cpp", ".hpp", ".cc", ".cxx", ".hxx", ".hh", ".inl"}
+    if not os.path.exists(path):
+        st.error(f"❌ 路径不存在：{path}")
+        return []
+
+    # zip 文件：复用现有解压逻辑
+    if os.path.isfile(path):
+        if not path.lower().endswith(".zip"):
+            st.error("❌ 仅支持 .zip 文件或文件夹路径")
+            return []
+        with open(path, "rb") as f:
+            return _extract_files_from_zip(f)
+
+    # 文件夹：递归扫描源文件
+    file_tuples = []
+    skip_dirs = {".git", ".svn", ".venv", "node_modules", "__pycache__", "build", "out"}
+    for root, dirs, files in os.walk(path):
+        dirs[:] = [d for d in dirs if d not in skip_dirs]
+        for fn in sorted(files):
+            ext = os.path.splitext(fn)[1].lower()
+            if ext not in CPP_EXTENSIONS:
+                continue
+            fp = os.path.join(root, fn)
+            try:
+                if os.path.getsize(fp) > 500 * 1024:
+                    continue
+                with open(fp, "rb") as f:
+                    text = f.read().decode("utf-8", errors="replace")
+            except OSError:
+                continue
+            if not text.strip():
+                continue
+            rel = os.path.relpath(fp, path).replace("\\", "/")
+            file_tuples.append((rel, text))
+
+    if not file_tuples:
+        st.warning("⚠️ 该文件夹中未找到 C/C++ 源文件")
+        return []
+
+    st.success(f"✅ 扫描到 **{len(file_tuples)}** 个源文件")
+    return file_tuples
 
 
 def _extract_files_from_zip(zip_file) -> list:
