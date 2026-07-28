@@ -80,6 +80,7 @@ const API = {
   clearDocs() { return this.del("/api/docs"); },
   crossValidate(module) { return this.post("/api/validate/cross", { module }); },
   getHistory(limit) { return this.get(`/api/history?limit=${limit || 50}`); },
+  clearHistory() { return this.del("/api/history"); },
 
   // ---- 模板 ----
   listTemplates() { return this.get("/api/templates"); },

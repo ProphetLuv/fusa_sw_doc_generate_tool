@@ -204,6 +204,14 @@ def get_history(limit: int = 50):
     return {"history": STATE.generation_history[-limit:][::-1]}
 
 
+@router.delete("/api/history")
+def clear_history():
+    """清空所有生成历史记录。"""
+    STATE.generation_history = []
+    STATE.persist()
+    return {"ok": True}
+
+
 @router.get("/api/templates")
 def list_templates():
     return {

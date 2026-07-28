@@ -67,7 +67,10 @@ const Workspace = {
           </div></div>
 
           <div class="card"><div class="card-body">
-            <label class="section-label">📜 生成历史</label>
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <label class="section-label mb-0">📜 生成历史</label>
+              <button class="btn btn-outline-danger btn-sm" id="ws-clear-history" type="button">🗑 清除</button>
+            </div>
             <div id="ws-history" class="small"></div>
           </div></div>
         </div>
@@ -105,6 +108,7 @@ const Workspace = {
     $("ws-review").addEventListener("change", () => this.refreshEstimate());
     $("ws-generate").addEventListener("click", () => this.generate());
     $("ws-stop").addEventListener("click", () => this.stop());
+    $("ws-clear-history").addEventListener("click", () => this.clearHistory());
     this._bindModChips();
     this.el().querySelectorAll("#ws-result-tabs button").forEach((b) =>
       b.addEventListener("click", () => this.switchTab(b.dataset.rtab)));
@@ -226,6 +230,17 @@ const Workspace = {
           <span class="text-muted">${UI.esc(h.timestamp.slice(5, 16))}</span></div>`;
       }).join("");
     } catch (err) { box.innerHTML = '<span class="text-danger">加载失败</span>'; }
+  },
+
+  async clearHistory() {
+    if (!confirm("确定要清除所有生成历史记录吗？此操作不可撤销。")) return;
+    try {
+      await API.clearHistory();
+      UI.toast("生成历史已清除", "ok");
+      this.loadHistory();
+    } catch (err) {
+      UI.toast("清除失败: " + err.message, "error");
+    }
   },
 
   /* ---------------- 生成（SSE） ---------------- */
