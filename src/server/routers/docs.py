@@ -1,0 +1,232 @@
+# -*- coding: utf-8 -*-
+"""docs.py — 文档 / 校验 / 导出 / 历史 / 模板 路由。"""
+
+import io
+import time
+import difflib
+import zipfile
+
+from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi.responses import Response
+
+from server.state import STATE
+from server.models import CrossValidateRequest
+from server.generation import _run_validation
+from server.estimate import AGENT_META, AGENT_ORDER
+from doc_exporter import export_to_word, export_fmea_to_excel
+from validator import validate_cross_document_traceability
+from template_parser import parse_template, get_supported_extensions
+
+router = APIRouter(tags=["docs"])
+
+
+# ======================================================================
+# 文档读取
+# ======================================================================
+
+@router.get("/api/docs")
+def list_docs(module: str = None):
+    """列出指定模块（默认活动模块）的文档摘要。"""
+    mod = module or STATE.active_module_name()
+    docs = STATE.get_module_docs(mod)
+    items = [{
+        "agent": dt, "chars": len(content),
+        "icon": AGENT_META.get(dt, {}).get("icon", "📄"),
+    } for dt, content in docs.items()]
+    # 全工程各模块完成度
+    overview = {mn: len(d) for mn, d in STATE.docs_by_module.items() if d}
+    return {
+        "module": mod, "docs": items,
+        "agent_order": AGENT_ORDER,
+        "overview": overview,
+    }
+
+
+@router.get("/api/docs/{module}/{agent}")
+def get_doc(module: str, agent: str):
+    """获取单个文档内容 + 校验 + 版本 + Token 用量。"""
+    agent = agent.upper()
+    docs = STATE.get_module_docs(module)
+    if agent not in docs:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    content = docs[agent]
+    code = STATE.module_code(module)
+    _, validation = _run_validation(agent, content, code,
+                                    STATE.agent_templates.get(agent))
+    # 版本 Diff（当前 vs 上一版本）
+    versions = STATE.get_versions(module, agent)
+    diff = ""
+    if versions:
+        diff = "".join(difflib.unified_diff(
+            versions[-1].splitlines(keepends=True),
+            content.splitlines(keepends=True),
+            fromfile="上一版本", tofile="当前版本", lineterm=""))
+    return {
+        "module": module, "agent": agent, "content": content,
+        "validation": validation,
+        "version_count": len(versions),
+        "diff": diff,
+        "token_usage": STATE.get_token_usage(module, agent),
+    }
+
+
+@router.delete("/api/docs/{module}/{agent}")
+def delete_doc(module: str, agent: str):
+    docs = STATE.get_module_docs(module)
+    docs.pop(agent.upper(), None)
+    STATE.persist()
+    return {"ok": True}
+
+
+@router.delete("/api/docs")
+def clear_all_docs():
+    STATE.docs_by_module = {}
+    STATE.batch_checkpoint = {}
+    STATE.persist()
+    return {"ok": True}
+
+
+# ======================================================================
+# 跨文档追溯校验
+# ======================================================================
+
+@router.post("/api/validate/cross")
+def cross_validate(req: CrossValidateRequest):
+    mod = req.module or STATE.active_module_name()
+    docs = STATE.get_module_docs(mod)
+    if len(docs) < 2:
+        raise HTTPException(status_code=400, detail="至少需要 2 份文档才能进行跨文档校验")
+    report = validate_cross_document_traceability(docs)
+    return {
+        "module": mod,
+        "summary": report.summary(),
+        "passed": report.passed,
+        "results": [{
+            "check_name": r.check_name, "passed": r.passed,
+            "severity": r.severity, "message": r.message, "details": r.details,
+        } for r in report.results],
+    }
+
+
+# ======================================================================
+# 导出
+# ======================================================================
+
+def _doc_or_404(module: str, agent: str) -> str:
+    docs = STATE.get_module_docs(module)
+    if agent not in docs:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    return docs[agent]
+
+
+@router.get("/api/export/word")
+def export_word(module: str, agent: str):
+    agent = agent.upper()
+    content = _doc_or_404(module, agent)
+    metadata = {
+        "doc_id": f"DOC-{agent}-{module}", "version": "1.0",
+        "module_name": module, "asil_level": STATE.config.get("asil_level", "ASIL B"),
+        "date": time.strftime("%Y-%m-%d"),
+    }
+    data = export_to_word(title=f"{module} {agent} 文档", markdown=content, metadata=metadata)
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{module}_{agent}.docx"'},
+    )
+
+
+@router.get("/api/export/excel")
+def export_excel(module: str, agent: str = "FMEA"):
+    agent = agent.upper()
+    content = _doc_or_404(module, agent)
+    if agent != "FMEA":
+        raise HTTPException(status_code=400, detail="Excel 导出仅适用于 FMEA 文档")
+    data = export_fmea_to_excel(content)
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{module}_FMEA.xlsx"'},
+    )
+
+
+@router.get("/api/export/zip")
+def export_zip():
+    """将所有模块的已生成文档打包为 zip（按模块子目录组织）。"""
+    asil = STATE.config.get("asil_level", "ASIL B")
+    docs_by_module = STATE.docs_by_module
+    if not any(docs_by_module.values()):
+        raise HTTPException(status_code=400, detail="暂无可导出的文档")
+
+    buf = io.BytesIO()
+    multi = len([1 for d in docs_by_module.values() if d]) > 1
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for mod_name, docs in docs_by_module.items():
+            if not docs:
+                continue
+            prefix = f"{mod_name}/" if multi else ""
+            for dt, content in docs.items():
+                zf.writestr(f"{prefix}{mod_name}_{dt}.md", content)
+                try:
+                    metadata = {
+                        "doc_id": f"DOC-{dt}-{mod_name}", "version": "1.0",
+                        "module_name": mod_name, "asil_level": asil,
+                        "date": time.strftime("%Y-%m-%d"),
+                    }
+                    zf.writestr(f"{prefix}{mod_name}_{dt}.docx",
+                                export_to_word(title=f"{mod_name} {dt} 文档",
+                                               markdown=content, metadata=metadata))
+                except Exception:
+                    pass
+                if dt == "FMEA":
+                    try:
+                        zf.writestr(f"{prefix}{mod_name}_FMEA.xlsx",
+                                    export_fmea_to_excel(content))
+                    except Exception:
+                        pass
+    return Response(
+        content=buf.getvalue(), media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="全部文档.zip"'},
+    )
+
+
+# ======================================================================
+# 历史 & 模板
+# ======================================================================
+
+@router.get("/api/history")
+def get_history(limit: int = 50):
+    return {"history": STATE.generation_history[-limit:][::-1]}
+
+
+@router.get("/api/templates")
+def list_templates():
+    return {
+        "templates": {k: len(v) for k, v in STATE.agent_templates.items()},
+        "supported_extensions": get_supported_extensions(),
+    }
+
+
+@router.post("/api/templates/{agent}")
+async def upload_template(agent: str, file: UploadFile = File(...)):
+    agent = agent.upper()
+    raw = await file.read()
+
+    class _Wrap:
+        def __init__(self, name, data):
+            self.name = name
+            self._data = data
+        def read(self):
+            return self._data
+
+    parsed = parse_template(_Wrap(file.filename, raw))
+    if not parsed:
+        raise HTTPException(status_code=400, detail=f"模板解析失败: {file.filename}")
+    STATE.agent_templates[agent] = parsed
+    return {"agent": agent, "chars": len(parsed), "preview": parsed[:3000]}
+
+
+@router.delete("/api/templates/{agent}")
+def delete_template(agent: str):
+    STATE.agent_templates.pop(agent.upper(), None)
+    return {"ok": True}

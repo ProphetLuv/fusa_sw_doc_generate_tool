@@ -7,9 +7,8 @@ DeepSeek、智谱 GLM（ChatGLM）、Kimi（Moonshot）以及自定义兼容 API
 """
 
 import time as _time
+from functools import lru_cache
 from typing import Generator, Optional
-
-import streamlit as st
 
 # 系统级角色提示，固定为功能安全工程师角色
 SYSTEM_PROMPT = (
@@ -276,7 +275,7 @@ class LLMEngine:
 # Token 估算工具
 # ======================================================================
 
-@st.cache_data(ttl=3600, max_entries=256)
+@lru_cache(maxsize=256)
 def estimate_tokens(text: str) -> int:
     """粗略估算文本 token 数（中文 ~1.5字/token，代码 ~3.5字符/token）。"""
     if not text:
@@ -286,7 +285,7 @@ def estimate_tokens(text: str) -> int:
     return int(chinese / 1.5 + other / 3.5)
 
 
-@st.cache_data(ttl=3600, max_entries=256)
+@lru_cache(maxsize=256)
 def estimate_cost(tokens: int, provider: str) -> str:
     """根据 token 数估算费用（仅供参考）。"""
     PRICING = {

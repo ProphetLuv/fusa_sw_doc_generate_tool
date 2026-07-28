@@ -90,7 +90,7 @@ echo  [信息] 虚拟环境创建成功。
 :: 3. 依赖完整性自检（缺失时自动安装，失败自动切换国内镜像源）
 :: ============================================================
 :check_deps
-"!PYTHON!" -c "import streamlit, openai, anthropic, docx, lxml, openpyxl, tree_sitter" >nul 2>&1
+"!PYTHON!" -c "import fastapi, uvicorn, multipart, openai, anthropic, docx, lxml, openpyxl, tree_sitter" >nul 2>&1
 if not errorlevel 1 (
     echo  [信息] 依赖包已就绪。
     goto find_port
@@ -114,17 +114,17 @@ exit /b 1
 echo  [信息] 依赖安装完成。
 
 :: ============================================================
-:: 4. 自动检测可用端口（从 8501 开始，最多尝试到 8510）
+:: 4. 自动检测可用端口（从 8000 开始，最多尝试到 8010）
 :: ============================================================
 :find_port
-set PORT=8501
+set PORT=8000
 :port_loop
 netstat -ano | findstr ":%PORT% " | findstr "LISTENING" >nul 2>&1
 if %errorlevel%==0 (
     echo  [提示] 端口 %PORT% 已被占用，尝试 %PORT%+1 ...
     set /a PORT+=1
-    if !PORT! GTR 8510 (
-        echo  [错误] 8501~8510 端口均被占用，请手动关闭占用程序后重试。
+    if !PORT! GTR 8010 (
+        echo  [错误] 8000~8010 端口均被占用，请手动关闭占用程序后重试。
         pause
         exit /b 1
     )
@@ -144,6 +144,10 @@ echo  关闭此窗口即可停止程序
 echo  ============================================
 echo.
 
-"!PYTHON!" -m streamlit run src\app.py --server.headless true --browser.gatherUsageStats false --server.port %PORT%
+:: 延迟 2 秒后自动打开浏览器
+start "" /min cmd /c "timeout /t 2 >nul & start http://localhost:%PORT%"
+
+cd /d "%~dp0src"
+"!PYTHON!" -m uvicorn server.main:app --host 127.0.0.1 --port %PORT%
 
 pause

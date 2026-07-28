@@ -1,0 +1,265 @@
+/* ==================================================================
+   软件功能安全文档生成器 — SPA 样式
+   ================================================================== */
+
+:root {
+  --sidebar-w: 340px;
+  --bg: #f5f6f8;
+  --panel: #ffffff;
+  --border: #e3e6ea;
+  --text: #1f2733;
+  --text-muted: #6b7280;
+  --primary: #4a6fdc;
+  --accent: #3a4a6b;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.app-shell {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ==================== 侧边栏 ==================== */
+.sidebar {
+  width: var(--sidebar-w);
+  min-width: var(--sidebar-w);
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(135deg, #3a4a6b 0%, #4a4068 100%);
+  color: #fff;
+}
+.sidebar-logo { font-size: 1.8rem; }
+.sidebar-title { font-weight: 700; font-size: 1rem; }
+.sidebar-subtitle { font-size: 0.72rem; opacity: 0.8; }
+
+.sidebar-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.sidebar-section {
+  margin-bottom: 18px;
+}
+.sidebar-section > label,
+.section-label {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* ==================== 主区 ==================== */
+.main {
+  flex: 1;
+  height: 100%;
+  overflow-y: auto;
+  padding: 18px 26px 60px;
+}
+
+.main-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.view-tabs .nav-link {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.view-tabs .nav-link.active {
+  background: var(--primary);
+  color: #fff;
+}
+.header-status { font-size: 0.82rem; color: var(--text-muted); }
+
+/* ==================== 标题 & 卡片 ==================== */
+.main-title {
+  font-size: 2.2rem;
+  font-weight: 700;
+  text-align: center;
+  margin: 6px 0 4px;
+}
+.sub-title {
+  text-align: center;
+  color: var(--text-muted);
+  margin-bottom: 18px;
+}
+
+.metric-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  text-align: center;
+}
+.metric-card .metric-value { font-size: 1.5rem; font-weight: 700; }
+.metric-card .metric-label { font-size: 0.78rem; color: var(--text-muted); }
+
+/* Agent 卡片 */
+.agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+}
+.agent-card {
+  border-radius: 14px;
+  padding: 16px;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 150px;
+  box-shadow: 0 3px 10px rgba(0,0,0,0.12);
+}
+.agent-card .agent-icon { font-size: 1.8rem; }
+.agent-card .agent-name { font-weight: 700; font-size: 1.05rem; }
+.agent-card .agent-full { font-size: 0.82rem; opacity: 0.9; }
+.agent-card .agent-desc { font-size: 0.76rem; opacity: 0.82; line-height: 1.4; flex: 1; }
+.agent-card .agent-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 0.74rem;
+}
+.agent-badge {
+  background: rgba(255,255,255,0.22);
+  border-radius: 20px;
+  padding: 2px 10px;
+}
+
+/* 免责声明 */
+.disclaimer-box {
+  background: #fff8e1;
+  border: 1px solid #ffe082;
+  border-left: 4px solid #ffb300;
+  color: #7a5b00;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  margin-bottom: 16px;
+}
+
+/* 模块列表 */
+.module-list { display: flex; flex-direction: column; gap: 8px; }
+.module-row {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--panel);
+  cursor: pointer;
+  transition: border-color .15s, box-shadow .15s;
+}
+.module-row:hover { border-color: var(--primary); }
+.module-row.active { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(74,111,220,.18); }
+.module-row .mod-name { font-weight: 600; }
+.module-row .mod-meta { font-size: 0.75rem; color: var(--text-muted); }
+
+/* 代码 / 文档预览 */
+.doc-render {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px 22px;
+  line-height: 1.7;
+  overflow-x: auto;
+}
+.doc-render pre {
+  background: #f6f8fa;
+  border-radius: 8px;
+  padding: 12px;
+  overflow-x: auto;
+}
+.doc-render table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+.doc-render th, .doc-render td { border: 1px solid var(--border); padding: 6px 10px; font-size: 0.85rem; }
+.doc-render th { background: #f0f2f5; }
+
+.stream-cursor::after {
+  content: "▌";
+  animation: blink 1s steps(2) infinite;
+  color: var(--primary);
+}
+@keyframes blink { 0%,50% { opacity: 1; } 50.01%,100% { opacity: 0; } }
+
+/* 校验报告 */
+.check-item {
+  display: flex; gap: 8px; align-items: flex-start;
+  padding: 6px 10px; border-radius: 6px; font-size: 0.82rem; margin-bottom: 4px;
+}
+.check-pass { background: #e8f5e9; color: #1b5e20; }
+.check-fail { background: #ffebee; color: #b71c1c; }
+.check-warn { background: #fff8e1; color: #7a5b00; }
+
+/* 预估表 */
+.est-table td { padding: 3px 8px; font-size: 0.82rem; }
+.est-table td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* 全局遮罩 */
+.global-overlay {
+  position: fixed; inset: 0; z-index: 2000;
+  background: rgba(0,0,0,0.45);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+}
+.global-overlay .overlay-text { color: #fff; font-size: 0.95rem; }
+
+.progress-thin { height: 8px; }
+
+.token-tag {
+  display: inline-block;
+  background: #eef1f8;
+  border-radius: 6px;
+  padding: 1px 8px;
+  font-size: 0.74rem;
+  color: var(--accent);
+}
+
+.d-none { display: none !important; }
+
+/* 滚动条 */
+.sidebar-body::-webkit-scrollbar, .main::-webkit-scrollbar { width: 8px; }
+.sidebar-body::-webkit-scrollbar-thumb, .main::-webkit-scrollbar-thumb {
+  background: #c7ccd4; border-radius: 4px;
+}
+
+/* ==================== 暗色适配 ==================== */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171c;
+    --panel: #1c2027;
+    --border: #2c313a;
+    --text: #e4e7eb;
+    --text-muted: #99a1ad;
+  }
+  .doc-render pre { background: #0f1115; }
+  .doc-render th { background: #23272f; }
+  .metric-card, .module-row { background: var(--panel); }
+  .disclaimer-box { background: #2a2410; border-color: #5a4a10; color: #e0c060; }
+  .check-pass { background: #14301a; color: #8fd99a; }
+  .check-fail { background: #3a1416; color: #f0a0a0; }
+  .check-warn { background: #2a2410; color: #e0c060; }
+  .token-tag { background: #23272f; color: #a9b8e0; }
+}
