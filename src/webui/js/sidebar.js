@@ -21,6 +21,7 @@ const Sidebar = {
     const tplChars = Store.templates[tplAgent] || 0;
     const thinkingEnabled = c.thinking_enabled === true;
     const thinkingIntensity = c.thinking_intensity || 5;
+    const bgPrompt = c.background_prompt || "";
 
     this.el().innerHTML = `
       <div class="sidebar-section">
@@ -74,6 +75,13 @@ const Sidebar = {
         <label class="section-label">🌡️ Temperature <span id="temp-val" class="token-tag">${temp}</span></label>
         <input type="range" class="form-range" id="cfg-temp" min="0" max="1" step="0.05" value="${temp}" />
         <div class="form-text small" id="temp-hint">${ASIL_TEMP_HINT[asil] || ""}</div>
+      </div>
+
+      <div class="sidebar-section">
+        <label class="section-label">📝 项目背景提示（全局）</label>
+        <textarea class="form-control form-control-sm" id="cfg-background" rows="4"
+                  placeholder="描述项目背景、代码功能……将注入到所有 Agent Prompt 开头">${UI.esc(bgPrompt)}</textarea>
+        <div class="form-text small">对所有 Agent 生效，帮助 LLM 理解代码上下文</div>
       </div>
 
       <hr/>
@@ -183,6 +191,12 @@ const Sidebar = {
       const t = parseFloat(e.target.value);
       Store.config.temperature = t;
       this.saveConfig({ temperature: t });
+    });
+
+    // 项目背景提示（保留多段落格式，不 trim）
+    $("cfg-background").addEventListener("change", (e) => {
+      Store.config.background_prompt = e.target.value;
+      this.saveConfig({ background_prompt: e.target.value });
     });
 
     // 思考模式开关

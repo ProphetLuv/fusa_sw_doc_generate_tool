@@ -16,6 +16,7 @@ class ConfigModel(BaseModel):
     asil_level: str = "ASIL B"
     thinking_enabled: bool = False
     thinking_intensity: int = 5  # 1-10, 默认中档
+    background_prompt: str = ""  # 项目背景描述，注入到所有 Agent Prompt 开头
 
 
 class ConfigPatch(BaseModel):
@@ -29,6 +30,7 @@ class ConfigPatch(BaseModel):
     asil_level: Optional[str] = None
     thinking_enabled: Optional[bool] = None
     thinking_intensity: Optional[int] = None
+    background_prompt: Optional[str] = None
 
 
 class PasteRequest(BaseModel):

@@ -67,6 +67,7 @@ async def import_config(file: UploadFile = File(...)):
         "model": full.get("model", ""),
         "thinking_enabled": full.get("thinking_enabled", False),
         "thinking_intensity": full.get("thinking_intensity", 5),
+        "background_prompt": full.get("background_prompt", ""),
     })
     return {"config": STATE.config}
 

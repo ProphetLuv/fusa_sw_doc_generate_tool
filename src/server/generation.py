@@ -149,7 +149,9 @@ def generate_single_stream(agent_type, module, cfg, chunked_mode=False,
             full_text = out.text
             prompt_for_log = out.text  # 分段模式无单一 prompt，用输出估算
         else:
-            prompt_for_log = _PROMPT_MGR.get_prompt(agent_type, code, ctx, custom_template=custom_template)
+            prompt_for_log = _PROMPT_MGR.get_prompt(agent_type, code, ctx,
+                                                     custom_template=custom_template,
+                                                     background_prompt=cfg.get("background_prompt"))
             yield {"event": "status", "data": {"message": f"正在生成 {agent_type} ..."}}
             for chunk in engine.stream_generate(prompt_for_log):
                 full_text += chunk
@@ -220,9 +222,14 @@ class _Collector:
 
 def _chunked_generate(agent_type, code, ctx, cfg, engine, custom_template, collector):
     """分段并发生成 + 一致性合并（生成器，yield 事件；结果写入 collector.text）。"""
-    chunks = _PROMPT_MGR.get_chunk_prompts(agent_type, code, ctx, custom_template=custom_template)
+    chunks = _PROMPT_MGR.get_chunk_prompts(agent_type, code, ctx,
+                                            custom_template=custom_template,
+                                            background_prompt=cfg.get("background_prompt"))
     if len(chunks) <= 1:
-        prompt = chunks[0][1] if chunks else _PROMPT_MGR.get_prompt(agent_type, code, ctx, custom_template=custom_template)
+        prompt = chunks[0][1] if chunks else _PROMPT_MGR.get_prompt(
+            agent_type, code, ctx,
+            custom_template=custom_template,
+            background_prompt=cfg.get("background_prompt"))
         yield {"event": "status", "data": {"message": f"正在生成 {agent_type} ..."}}
         text = ""
         for c in engine.stream_generate(prompt):
@@ -380,7 +387,8 @@ def generate_batch_stream(cfg, agents=None, modules=None):
             t0 = time.time()
             agent_engine = make_engine(cfg, max_tokens=agent_defaults.get(agent_type))
             prompt = _PROMPT_MGR.get_prompt(agent_type, mod_code, ctx,
-                                            custom_template=STATE.agent_templates.get(agent_type))
+                                            custom_template=STATE.agent_templates.get(agent_type),
+                                            background_prompt=cfg.get("background_prompt"))
             text = ""
             try:
                 for c in agent_engine.stream_generate(prompt):

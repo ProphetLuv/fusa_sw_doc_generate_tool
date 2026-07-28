@@ -31,6 +31,7 @@ def _default_config() -> dict:
         "asil_level": "ASIL B",
         "thinking_enabled": False,
         "thinking_intensity": 5,
+        "background_prompt": "",
     }
 
 

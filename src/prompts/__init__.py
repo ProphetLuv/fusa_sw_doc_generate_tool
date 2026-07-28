@@ -63,6 +63,7 @@ class PromptManager:
         code: str,
         context: Optional[Dict[str, Any]] = None,
         custom_template: Optional[str] = None,
+        background_prompt: Optional[str] = None,
     ) -> str:
         ctx = context or {}
         module_name = ctx.get("module_name", "目标模块")
@@ -73,6 +74,10 @@ class PromptManager:
             raise ValueError(f"不支持的文档类型: {doc_type}，可选: {self.DOC_TYPES}")
 
         prompt = builder(code, module_name, asil_level)
+
+        # 注入全局项目背景（在所有 Agent 指令之前）
+        if background_prompt:
+            prompt = self._inject_background(prompt, background_prompt)
 
         # 注入功能安全领域知识库（降低 LLM 幻觉，提升专业性）
         knowledge = get_safety_knowledge(asil_level, doc_type.upper())
@@ -87,6 +92,13 @@ class PromptManager:
             prompt = self._apply_custom_template(prompt, custom_template)
 
         return prompt
+
+    def _inject_background(self, prompt: str, background_prompt: str) -> str:
+        """在 Prompt 最开头注入项目背景描述，帮助 LLM 理解代码上下文。"""
+        bg = background_prompt.strip()
+        if not bg:
+            return prompt
+        return f"## 项目背景与代码概述\n\n{bg}\n\n---\n\n{prompt}"
 
     def _apply_custom_template(self, base_prompt: str, template: str) -> str:
         template_instruction = f"""
@@ -167,6 +179,7 @@ class PromptManager:
         code: str,
         context: Optional[Dict[str, Any]] = None,
         custom_template: Optional[str] = None,
+        background_prompt: Optional[str] = None,
     ) -> list:
         ctx = context or {}
         module_name = ctx.get("module_name", "目标模块")
@@ -174,7 +187,7 @@ class PromptManager:
 
         chunks = self.DOC_CHUNKS.get(doc_type.upper(), [])
         if not chunks:
-            full_prompt = self.get_prompt(doc_type, code, context, custom_template)
+            full_prompt = self.get_prompt(doc_type, code, context, custom_template, background_prompt=background_prompt)
             return [(doc_type, full_prompt)]
 
         results = []
@@ -185,6 +198,9 @@ class PromptManager:
                 chunk["id"], chunk["title"], chunk["sections"],
                 total_chunks=len(chunks),
             )
+            # 注入全局项目背景
+            if background_prompt:
+                chunk_prompt = self._inject_background(chunk_prompt, background_prompt)
             if prior_docs:
                 chunk_prompt = self._inject_prior_docs(chunk_prompt, prior_docs)
             if custom_template:
