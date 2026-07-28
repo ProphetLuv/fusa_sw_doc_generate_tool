@@ -12,6 +12,18 @@ from server.estimate import AGENT_ORDER
 router = APIRouter(prefix="/api/generate", tags=["generate"])
 
 
+@router.get("/batch/stream")
+def generate_batch_stream(agents: Optional[str] = None):
+    """批量流式生成（SSE）。agents 为逗号分隔的 Agent 名（如 SRS,SAD），缺省为全部 7 个。
+
+    注：此路由必须定义在 /{agent}/stream 之前，否则 "batch" 会被动态路由当作 agent 名抢先匹配。
+    """
+    agent_list = None
+    if agents:
+        agent_list = [a.strip().upper() for a in agents.split(",") if a.strip()]
+    return sse_response(gen.generate_batch_stream(dict(STATE.config), agents=agent_list))
+
+
 @router.get("/{agent}/stream")
 def generate_agent_stream(
     agent: str,
@@ -42,12 +54,6 @@ def generate_agent_stream(
         max_tokens=max_tokens, custom_template=custom_template,
     )
     return sse_response(ev)
-
-
-@router.get("/batch/stream")
-def generate_batch_stream():
-    """批量流式生成（SSE）。"""
-    return sse_response(gen.generate_batch_stream(dict(STATE.config)))
 
 
 @router.post("/cancel")

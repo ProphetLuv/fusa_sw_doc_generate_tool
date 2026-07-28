@@ -313,11 +313,19 @@ def _chunked_generate(agent_type, code, ctx, cfg, engine, custom_template, colle
 # 批量生成（SSE 事件生成器）
 # ======================================================================
 
-def generate_batch_stream(cfg):
-    """按模块 × Agent 顺序批量生成，SSE 事件生成器。支持断点续传与取消。"""
+def generate_batch_stream(cfg, agents=None):
+    """按模块 × Agent 顺序批量生成，SSE 事件生成器。支持断点续传与取消。
+
+    agents 为 None 时生成全部 7 个 Agent；传入 Agent 名列表时只生成其中的子集
+    （如仅 SRS 跑多个模块），顺序仍遵循 AGENT_ORDER。
+    """
     if not cfg.get("api_key"):
         yield {"event": "error", "data": {"message": "未配置 API Key"}}
         return
+
+    agent_list = [a for a in AGENT_ORDER if a in agents] if agents else list(AGENT_ORDER)
+    if not agent_list:
+        agent_list = list(AGENT_ORDER)
 
     agent_defaults = get_agent_token_defaults(cfg.get("asil_level", "ASIL B"))
     project_modules = STATE.project_modules
@@ -334,7 +342,7 @@ def generate_batch_stream(cfg):
         yield {"event": "error", "data": {"message": f"引擎初始化失败: {e}"}}
         return
 
-    total_steps = len(modules) * len(AGENT_ORDER)
+    total_steps = len(modules) * len(agent_list)
     checkpoint = STATE.batch_checkpoint
     STATE.cancel_generation = False
     step = 0
@@ -343,12 +351,12 @@ def generate_batch_stream(cfg):
     for mod_name in modules:
         mod_code = project_modules.get(mod_name, "")
         if not mod_code:
-            step += len(AGENT_ORDER)
+            step += len(agent_list)
             continue
         mod_docs = STATE.get_module_docs(mod_name)
         mod_checkpoint = checkpoint.setdefault(mod_name, {})
 
-        for agent_type in AGENT_ORDER:
+        for agent_type in agent_list:
             if mod_checkpoint.get(agent_type) == "done":
                 step += 1
                 continue
@@ -401,7 +409,7 @@ def generate_batch_stream(cfg):
         STATE.batch_checkpoint = {}
     STATE.persist()
 
-    done_count = sum(1 for m in modules for a in AGENT_ORDER
+    done_count = sum(1 for m in modules for a in agent_list
                      if checkpoint.get(m, {}).get(a) == "done")
     yield {"event": "batch_done", "data": {
         "summary": f"批量生成完成（{done_count}/{total_steps} 份文档）",

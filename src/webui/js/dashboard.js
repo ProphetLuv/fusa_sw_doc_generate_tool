@@ -374,20 +374,53 @@ const Dashboard = {
       <div class="card"><div class="card-body">
         <h6 class="card-title">⚙️ 批量与导出</h6>
         <div id="est-box" class="mb-2 small text-muted">Token 预估加载中...</div>
+        <div class="mb-2">
+          <div class="d-flex align-items-center gap-2 mb-1">
+            <label class="section-label mb-0">Agent 范围</label>
+            <button class="btn btn-link btn-sm p-0" id="batch-agent-all">全选</button>
+            <span class="text-muted">·</span>
+            <button class="btn btn-link btn-sm p-0" id="batch-agent-none">清空</button>
+          </div>
+          <div id="batch-agent-chips" class="d-flex flex-wrap gap-1">
+            ${AGENT_ORDER.map((a) => `<button type="button" class="btn btn-sm btn-primary batch-agent-chip active" data-agent="${a}">${a}</button>`).join("")}
+          </div>
+        </div>
         <div class="d-flex flex-wrap gap-2">
-          <button class="btn btn-primary btn-sm" id="btn-batch">🚀 一键批量生成（所选模块 × 7 Agent）</button>
+          <button class="btn btn-primary btn-sm" id="btn-batch">🚀 批量生成（所选模块 × 所选 Agent）</button>
           <button class="btn btn-danger btn-sm d-none" id="btn-cancel">⏹ 取消</button>
           <button class="btn btn-outline-secondary btn-sm" id="btn-cross">🔗 跨文档校验</button>
           <button class="btn btn-outline-success btn-sm" id="btn-zip">📦 打包下载全部</button>
           <button class="btn btn-outline-danger btn-sm" id="btn-clear-docs">🗑 清空文档</button>
         </div>
       </div></div>`;
+    this._bindAgentChips();
     document.getElementById("btn-batch").addEventListener("click", () => this.runBatch());
     document.getElementById("btn-cancel").addEventListener("click", () => this.cancelBatch());
     document.getElementById("btn-cross").addEventListener("click", () => this.crossValidate());
     document.getElementById("btn-zip").addEventListener("click", () => UI.download(API.downloadUrl("zip"), "全部文档.zip"));
     document.getElementById("btn-clear-docs").addEventListener("click", () => this.clearDocs());
     this.refreshEstimate();
+  },
+
+  /* Agent 范围 chips：切换 / 全选 / 清空 */
+  _bindAgentChips() {
+    const setChip = (chip, on) => {
+      chip.classList.toggle("active", on);
+      chip.classList.toggle("btn-primary", on);
+      chip.classList.toggle("btn-outline-primary", !on);
+    };
+    document.querySelectorAll(".batch-agent-chip").forEach((chip) =>
+      chip.addEventListener("click", () => setChip(chip, !chip.classList.contains("active"))));
+    const all = document.getElementById("batch-agent-all");
+    const none = document.getElementById("batch-agent-none");
+    if (all) all.addEventListener("click", () =>
+      document.querySelectorAll(".batch-agent-chip").forEach((c) => setChip(c, true)));
+    if (none) none.addEventListener("click", () =>
+      document.querySelectorAll(".batch-agent-chip").forEach((c) => setChip(c, false)));
+  },
+
+  _selectedBatchAgents() {
+    return Array.from(document.querySelectorAll(".batch-agent-chip.active")).map((c) => c.dataset.agent);
   },
 
   async refreshEstimate() {
@@ -405,13 +438,16 @@ const Dashboard = {
   runBatch() {
     if (!Store.config.api_key) { UI.toast("请先在左侧配置 API Key", "warn"); return; }
     if (Store.generating) { UI.toast("已有生成任务在进行", "warn"); return; }
+    const agents = this._selectedBatchAgents();
+    if (agents.length === 0) { UI.toast("请至少选择一个 Agent", "warn"); return; }
+    const full = agents.length === AGENT_ORDER.length;
     Store.generating = true;
     document.getElementById("btn-batch").classList.add("disabled");
     document.getElementById("btn-cancel").classList.remove("d-none");
 
     const panel = document.getElementById("batch-panel");
     panel.innerHTML = `<div class="card"><div class="card-body">
-      <div class="d-flex justify-content-between"><h6 class="mb-2">批量生成进度</h6><span id="batch-count"></span></div>
+      <div class="d-flex justify-content-between"><h6 class="mb-2">批量生成进度${full ? "" : `（仅 ${agents.join(", ")}）`}</h6><span id="batch-count"></span></div>
       <div class="progress progress-thin mb-2"><div class="progress-bar" id="batch-bar" style="width:0%"></div></div>
       <div id="batch-status" class="small text-muted"></div>
     </div></div>`;
@@ -419,7 +455,9 @@ const Dashboard = {
     const cnt = document.getElementById("batch-count");
     const st = document.getElementById("batch-status");
 
-    this._batchSSE = openSSE("/api/generate/batch/stream", {
+    const url = full ? "/api/generate/batch/stream"
+      : `/api/generate/batch/stream?agents=${encodeURIComponent(agents.join(","))}`;
+    this._batchSSE = openSSE(url, {
       progress: (d) => {
         const pct = Math.round((d.step / d.total) * 100);
         bar.style.width = pct + "%";
