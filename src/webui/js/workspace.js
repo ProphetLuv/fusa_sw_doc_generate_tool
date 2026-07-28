@@ -127,7 +127,9 @@ const Workspace = {
           // 普通点击：单选（取消其他，仅选中当前）
           document.querySelectorAll(".ws-mod-chip").forEach((c) => setChip(c, c === chip));
         }
-        this.refreshEstimate(mod);
+        // 仅当 chip 变为 active 且最终为单选时，才用 forceModule 避免 DOM 时序问题
+        const passForce = chip.classList.contains("active") ? mod : undefined;
+        this.refreshEstimate(passForce);
       }));
     const all = document.getElementById("ws-mod-all");
     const none = document.getElementById("ws-mod-none");
@@ -169,10 +171,13 @@ const Workspace = {
     const review = document.getElementById("ws-review").checked;
     // 优先使用传入的模块名，否则从 DOM 芯片状态推断
     const sel = this._selectedModules();
-    const targetModule = forceModule
-      || ((sel.length === 1) ? sel[0] : Store.activeModule);
-    const modLabel = forceModule
-      || (sel.length === 1 ? sel[0] : (sel.length > 1 ? `${sel.length} 个模块` : (Store.activeModule || "-")));
+    // forceModule 仅在 chip 刚变为 active 且最终为单选时使用（避免 DOM 时序竞态）
+    const targetModule = (forceModule && sel.length === 1)
+      ? forceModule
+      : ((sel.length === 1) ? sel[0] : Store.activeModule);
+    const modLabel = (forceModule && sel.length === 1)
+      ? forceModule
+      : (sel.length === 1 ? sel[0] : (sel.length > 1 ? `${sel.length} 个模块` : (Store.activeModule || "-")));
     try {
       const r = await API.estimateAgent(Store.wsAgent, targetModule, chunked, review);
       box.innerHTML = `

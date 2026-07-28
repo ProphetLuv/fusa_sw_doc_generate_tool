@@ -16,6 +16,8 @@ const Sidebar = {
     const keys = c.api_keys || [];
     const tplAgent = this.tplAgent || AGENT_ORDER[0];
     const tplChars = Store.templates[tplAgent] || 0;
+    const thinkingEnabled = c.thinking_enabled === true;
+    const thinkingIntensity = c.thinking_intensity || 5;
 
     this.el().innerHTML = `
       <div class="sidebar-section">
@@ -69,6 +71,28 @@ const Sidebar = {
         <label class="section-label">🌡️ Temperature <span id="temp-val" class="token-tag">${temp}</span></label>
         <input type="range" class="form-range" id="cfg-temp" min="0" max="1" step="0.05" value="${temp}" />
         <div class="form-text small" id="temp-hint">${ASIL_TEMP_HINT[asil] || ""}</div>
+      </div>
+
+      <hr/>
+
+      <div class="sidebar-section">
+        <label class="section-label">🧠 思考模式 <span class="text-muted small">(实验性)</span></label>
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="cfg-thinking" ${thinkingEnabled ? "checked" : ""}>
+          <label class="form-check-label small" for="cfg-thinking">启用深度推理</label>
+        </div>
+        <div class="mt-2">
+          <label class="form-label small mb-0">强度 <span id="thinking-val" class="token-tag">${thinkingIntensity}</span></label>
+          <input type="range" class="form-range" id="cfg-thinking-intensity"
+                 min="1" max="10" step="1" value="${thinkingIntensity}"
+                 ${thinkingEnabled ? "" : "disabled"}>
+        </div>
+        <div class="form-text small" id="thinking-hint">
+          ${thinkingIntensity <= 3 ? "轻度 · DeepSeek 自动映射为 high" : thinkingIntensity <= 7 ? "中度 · DeepSeek 自动映射为 high" : "深度 · 充分推理"}
+        </div>
+        <div class="form-text small text-muted">
+          支持：DeepSeek V4 / 千问 Qwen / OpenAI o1-o3 / Claude 3.5+<br>DeepSeek 思考模式下 temperature/top_p 不生效
+        </div>
       </div>
 
       <hr/>
@@ -153,6 +177,28 @@ const Sidebar = {
       const t = parseFloat(e.target.value);
       Store.config.temperature = t;
       this.saveConfig({ temperature: t });
+    });
+
+    // 思考模式开关
+    $("cfg-thinking").addEventListener("change", (e) => {
+      const on = e.target.checked;
+      Store.config.thinking_enabled = on;
+      const slider = $("cfg-thinking-intensity");
+      slider.disabled = !on;
+      this.saveConfig({ thinking_enabled: on });
+    });
+
+    // 思考强度滑块
+    $("cfg-thinking-intensity").addEventListener("input", (e) => {
+      const v = parseInt(e.target.value);
+      $("thinking-val").textContent = v;
+      const hint = $("thinking-hint");
+      hint.textContent = v <= 3 ? "轻度 · DeepSeek 自动映射为 high" : v <= 7 ? "中度 · DeepSeek 自动映射为 high" : "深度 · 充分推理";
+    });
+    $("cfg-thinking-intensity").addEventListener("change", (e) => {
+      const v = parseInt(e.target.value);
+      Store.config.thinking_intensity = v;
+      this.saveConfig({ thinking_intensity: v });
     });
 
     // 导入配置

@@ -57,19 +57,23 @@ class LLMEngine:
         temperature: float = 0.2,
         max_retries: int = 5,
         timeout: int = 300,
+        thinking_enabled: bool = False,
+        thinking_intensity: int = 5,
     ):
         """
         初始化 LLM 引擎。
 
         Args:
-            provider:    供应商名称，可选 openai / anthropic / dashscope / deepseek / glm / custom
-            api_key:     API 密钥（仅保存在内存，不落盘）
-            api_base:    自定义 base_url（custom 模式必填；其他模式可留空使用默认值）
-            model:       模型名称，为空时使用供应商默认值
-            max_tokens:  单次响应最大 token 数
-            temperature: 温度参数，控制随机性
-            max_retries: 失败自动重试次数（默认 5）
-            timeout:     单次请求超时秒数（默认 300）
+            provider:          供应商名称，可选 openai / anthropic / dashscope / deepseek / glm / custom
+            api_key:           API 密钥（仅保存在内存，不落盘）
+            api_base:          自定义 base_url（custom 模式必填；其他模式可留空使用默认值）
+            model:             模型名称，为空时使用供应商默认值
+            max_tokens:        单次响应最大 token 数
+            temperature:       温度参数，控制随机性
+            max_retries:       失败自动重试次数（默认 5）
+            timeout:           单次请求超时秒数（默认 300）
+            thinking_enabled:  是否启用思考/推理模式（仅部分模型支持）
+            thinking_intensity: 思考强度 1-10（越大推理越深，Token 消耗越多）
         """
         self.provider = provider.lower().strip()
         self.api_key = api_key
@@ -77,6 +81,8 @@ class LLMEngine:
         self.temperature = temperature
         self.max_retries = max_retries
         self.timeout = timeout
+        self.thinking_enabled = thinking_enabled
+        self.thinking_intensity = max(1, min(10, thinking_intensity))  # 钳位 1-10
 
         # 确定 base_url
         if self.provider == "custom":
@@ -101,6 +107,48 @@ class LLMEngine:
 
         # 最近一次生成的实际 Token 用量（由 API 返回）
         self.last_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+    def _thinking_kwargs(self) -> dict:
+        """根据 provider 与思考设置，返回需注入的 API 参数字典。
+
+        各 provider 支持情况：
+        - OpenAI o1/o3: 使用 reasoning_effort 参数（low/medium/high）
+        - DeepSeek V4:  默认开启思考，统一使用 reasoning_effort=high；
+                        须通过 extra_body {"thinking": {"type": "enabled"}} 传入
+        - DashScope 千问: 通过 extra_body {"enable_thinking": True} 开启，
+                        推理过程通过 reasoning_content 字段返回（不混入正文）
+        - Anthropic:     使用 thinking 块 {"type": "enabled", "budget_tokens": N}
+        - 其他 provider: 返回空字典（不注入，由模型自行忽略）
+        """
+        if not self.thinking_enabled:
+            return {}
+        ti = self.thinking_intensity
+        # 强度 → 三档映射
+        if ti <= 3:
+            level = "low"
+        elif ti <= 7:
+            level = "medium"
+        else:
+            level = "high"
+
+        if self.provider == "openai":
+            return {"reasoning_effort": level}
+        elif self.provider == "deepseek":
+            # DeepSeek V4 思考模式默认开启，且 low/medium 均映射为 high
+            # xhigh→max 仅用于 Agent 类请求，此处统一使用 high
+            return {
+                "reasoning_effort": "high",
+                "extra_body": {"thinking": {"type": "enabled"}},
+            }
+        elif self.provider == "dashscope":
+            # 千问思考模式：通过 extra_body 传入 enable_thinking=True
+            # 推理过程以 reasoning_content 返回，_stream_openai 仅取 content 正文
+            return {"extra_body": {"enable_thinking": True}}
+        elif self.provider == "anthropic":
+            budget_map = {"low": 2048, "medium": 4096, "high": 8192}
+            return {"thinking": {"type": "enabled", "budget_tokens": budget_map[level]}}
+        # glm / kimi / custom：思考参数暂不注入，模型自行决定
+        return {}
 
     def _get_openai_client(self):
         """获取或创建 OpenAI 兼容客户端（复用连接池）。"""
@@ -207,6 +255,7 @@ class LLMEngine:
             temperature=self.temperature,
             stream=True,
             stream_options={"include_usage": True},
+            **self._thinking_kwargs(),
         )
 
         for chunk in stream:
@@ -247,13 +296,17 @@ class LLMEngine:
         else:
             messages = [{"role": "user", "content": prompt}]
 
-        with client.messages.stream(
-            model=self.model,
-            max_tokens=self.max_tokens,
-            temperature=self.temperature,
-            system=SYSTEM_PROMPT,
-            messages=messages,
-        ) as stream:
+        stream_kwargs = {
+            "model": self.model,
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+            "system": SYSTEM_PROMPT,
+            "messages": messages,
+        }
+        think = self._thinking_kwargs()
+        if think.get("thinking"):
+            stream_kwargs["thinking"] = think["thinking"]
+        with client.messages.stream(**stream_kwargs) as stream:
             for text in stream.text_stream:
                 if _time.time() - start > self.timeout:
                     raise TimeoutError(f"生成超时（>{self.timeout}s）")

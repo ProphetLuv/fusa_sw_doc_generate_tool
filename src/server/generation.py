@@ -43,6 +43,8 @@ def make_engine(cfg: dict, max_tokens: int = None) -> LLMEngine:
         api_base=cfg.get("api_base"), model=cfg.get("model") or None,
         max_tokens=max_tokens or cfg.get("max_tokens", 8192),
         temperature=cfg.get("temperature", 0.2),
+        thinking_enabled=cfg.get("thinking_enabled", False),
+        thinking_intensity=cfg.get("thinking_intensity", 5),
     )
 
 

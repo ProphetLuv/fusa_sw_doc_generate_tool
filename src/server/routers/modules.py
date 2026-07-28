@@ -46,6 +46,14 @@ def rename(req: RenameRequest):
     # docs_by_module 同步重命名
     if req.old_name in STATE.docs_by_module:
         STATE.docs_by_module[req.new_name] = STATE.docs_by_module.pop(req.old_name)
+    # 同步迁移所有 {module}::{agent} 格式的 key
+    for src_dict in (STATE.doc_versions, STATE.token_usage):
+        for old_key, val in list(src_dict.items()):
+            if old_key.startswith(req.old_name + "::"):
+                agent = old_key[len(req.old_name) + 2:]
+                src_dict[f"{req.new_name}::{agent}"] = src_dict.pop(old_key)
+    if req.old_name in STATE.batch_checkpoint:
+        STATE.batch_checkpoint[req.new_name] = STATE.batch_checkpoint.pop(req.old_name)
     if STATE.active_module == req.old_name:
         STATE.active_module = req.new_name
     STATE.selected_modules = [req.new_name if m == req.old_name else m for m in STATE.selected_modules]

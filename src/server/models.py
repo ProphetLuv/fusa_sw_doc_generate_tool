@@ -14,6 +14,8 @@ class ConfigModel(BaseModel):
     temperature: float = 0.15
     module_name: str = "目标模块"
     asil_level: str = "ASIL B"
+    thinking_enabled: bool = False
+    thinking_intensity: int = 5  # 1-10, 默认中档
 
 
 class ConfigPatch(BaseModel):
@@ -25,6 +27,8 @@ class ConfigPatch(BaseModel):
     temperature: Optional[float] = None
     module_name: Optional[str] = None
     asil_level: Optional[str] = None
+    thinking_enabled: Optional[bool] = None
+    thinking_intensity: Optional[int] = None
 
 
 class PasteRequest(BaseModel):

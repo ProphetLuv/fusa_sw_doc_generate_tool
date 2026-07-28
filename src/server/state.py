@@ -29,6 +29,8 @@ def _default_config() -> dict:
         "temperature": 0.15,
         "module_name": "目标模块",
         "asil_level": "ASIL B",
+        "thinking_enabled": False,
+        "thinking_intensity": 5,
     }
 
 

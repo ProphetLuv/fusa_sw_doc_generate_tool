@@ -58,6 +58,8 @@ async def import_config(file: UploadFile = File(...)):
         "api_keys": all_keys,
         "api_base": full.get("api_base") or None,
         "model": full.get("model", ""),
+        "thinking_enabled": full.get("thinking_enabled", False),
+        "thinking_intensity": full.get("thinking_intensity", 5),
     })
     return {"config": STATE.config}
 
