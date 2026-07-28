@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from server.state import STATE
 from server.models import ConfigPatch
-from llm_engine import DEFAULT_MODELS, PROVIDER_BASE_URLS
+from llm_engine import DEFAULT_MODELS, PROVIDER_BASE_URLS, PROVIDER_ALIASES
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
@@ -59,8 +59,12 @@ async def import_config(file: UploadFile = File(...)):
     # 注意：导入时若 api_keys 与 api_key 重复则跳过，避免前端 textarea 暴露明文
     final_api_keys = [k for k in api_keys if k and k != primary]
 
+    # provider 归一化：小写 + 别名映射（Zhipu→glm, Qwen→dashscope 等）
+    raw_provider = (full.get("provider") or "openai").lower().strip()
+    provider = PROVIDER_ALIASES.get(raw_provider, raw_provider)
+
     STATE.update_config({
-        "provider": full.get("provider", "openai"),
+        "provider": provider,
         "api_key": primary,
         "api_keys": final_api_keys,
         "api_base": full.get("api_base") or None,

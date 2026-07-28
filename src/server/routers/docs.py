@@ -135,10 +135,12 @@ def export_word(module: str, agent: str):
         "date": time.strftime("%Y-%m-%d"),
     }
     data = export_to_word(title=f"{module} {agent} 文档", markdown=content, metadata=metadata)
+    # ASCII fallback for filename param (RFC 6266); full UTF-8 name in filename*
+    ascii_name = f"{agent}.docx"
     return Response(
         content=data,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f"attachment; filename=\"{module}_{agent}.docx\"; filename*=UTF-8''{quote(f'{module}_{agent}.docx')}"},
+        headers={"Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(f'{module}_{agent}.docx')}"},
     )
 
 
@@ -149,10 +151,11 @@ def export_excel(module: str, agent: str = "FMEA"):
     if agent != "FMEA":
         raise HTTPException(status_code=400, detail="Excel 导出仅适用于 FMEA 文档")
     data = export_fmea_to_excel(content)
+    ascii_name = f"{agent}.xlsx"
     return Response(
         content=data,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=\"{module}_FMEA.xlsx\"; filename*=UTF-8''{quote(f'{module}_FMEA.xlsx')}"},
+        headers={"Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(f'{module}_FMEA.xlsx')}"},
     )
 
 

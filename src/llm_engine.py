@@ -40,6 +40,16 @@ PROVIDER_BASE_URLS = {
     "kimi": KIMI_BASE_URL,
 }
 
+# provider 别名映射（用户配置中可能使用的非标准名称 → 内部标准名）
+PROVIDER_ALIASES = {
+    "zhipu": "glm",
+    "chatglm": "glm",
+    "bigmodel": "glm",
+    "qwen": "dashscope",
+    "tongyi": "dashscope",
+    "moonshot": "kimi",
+}
+
 
 class LLMEngine:
     """
@@ -76,6 +86,8 @@ class LLMEngine:
             thinking_intensity: 思考强度 1-10（越大推理越深，Token 消耗越多）
         """
         self.provider = provider.lower().strip()
+        # 别名归一化：zhipu→glm, qwen→dashscope 等
+        self.provider = PROVIDER_ALIASES.get(self.provider, self.provider)
         self.api_key = api_key
         self.max_tokens = max_tokens
         self.temperature = temperature

@@ -115,7 +115,10 @@ def pick_local_path(mode: str = "zip"):
 
 @router.delete("")
 def clear_uploaded():
-    """清除已上传的所有代码与模块。"""
+    """清除已上传的所有代码与模块，同时清空关联文档。"""
     STATE.clear_modules()
+    STATE.docs_by_module = {}
+    STATE.batch_checkpoint = {}
     STATE._analysis_cache.clear()
+    STATE.persist()
     return STATE.modules_snapshot()

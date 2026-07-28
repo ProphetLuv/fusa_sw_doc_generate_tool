@@ -575,7 +575,8 @@ const Dashboard = {
       </div>`;
     overlay.style.display = "flex";
     document.getElementById("dp-close").addEventListener("click", () => { overlay.style.display = "none"; });
-    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.style.display = "none"; });
+    // 使用 onclick 而非 addEventListener，避免多次打开预览后监听器累积
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.style.display = "none"; };
     document.getElementById("dp-word").addEventListener("click", () => {
       window.open(`/api/export/word?module=${encodeURIComponent(mod)}&agent=${agent}`, "_blank");
     });

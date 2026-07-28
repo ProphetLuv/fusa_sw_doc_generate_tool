@@ -236,7 +236,7 @@ const Workspace = {
     if (!confirm("确定要清除所有生成历史记录吗？此操作不可撤销。")) return;
     try {
       await API.clearHistory();
-      UI.toast("生成历史已清除", "ok");
+      UI.toast("生成历史已清除", "success");
       this.loadHistory();
     } catch (err) {
       UI.toast("清除失败: " + err.message, "error");
