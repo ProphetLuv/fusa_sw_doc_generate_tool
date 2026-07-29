@@ -4,11 +4,12 @@
 为 Prompt 注入结构化领域参考数据，降低 LLM 幻觉风险，提升专业性。
 
 数据来源：
-- ISO 26262:2018 Part 5/6/9
+- ISO 26262:2018 Part 5/6/9/11
 - IEC 62380（已被 IEC 61709 取代，失效率数据仍具参考性）
 - SN 29500 元器件失效率
 - AIAG-VDA FMEA 手册 2019
 - 典型嵌入式安全机制诊断覆盖率（DC）参考值
+- ISO 26262-11:2018 半导体应用指南（芯片级失效模式 / 安全机制 / 相关失效）
 """
 
 from typing import Optional
@@ -157,6 +158,115 @@ FTTI_REFERENCE = """
 
 
 # ======================================================================
+# 芯片级失效模式与硬件度量（ISO 26262-11:2018）
+# ======================================================================
+
+CHIP_FAILURE_MODE_LIBRARY = """
+### 芯片级失效模式参考（ISO 26262-11:2018 §4.7 / §5）
+
+**永久故障（Permanent Faults）**：
+- 固定型故障（stuck-at-0/1：逻辑门、寄存器、互连）
+- 桥接 / 短路 / 开路（金属层缺陷、通孔失效）
+- 参数漂移（阈值电压偏移、时序退化）
+- 老化机理：NBTI / HCI / TDDB / 电迁移（寿命后期失效率上升）
+
+**瞬态故障（Transient Faults / Soft Errors）**：
+- SEU（单粒子翻转：SRAM 位、触发器状态翻转）
+- SET（单粒子瞬态：组合逻辑毛刺被时序单元采样）
+- MBU（多位翻转：相邻位同时翻转，SECDED ECC 无法纠正，需交织缓解）
+- 来源：大气中子、封装材料 α 粒子；失效率随工艺节点缩小而上升
+
+**分单元典型失效模式**：
+- 数字逻辑：stuck-at、时序违例、状态机非法状态
+- 存储（SRAM/Flash/寄存器堆）：位翻转、地址译码错误、读写扰动
+- 模拟（ADC/PLL/LDO/带隙基准）：增益/偏移漂移、失锁、输出超限
+- 时钟：时钟丢失、频率漂移、占空比异常、毛刺
+- 互连/总线：数据损坏、地址错误、握手协议死锁
+
+**失效率量级参考**：
+- 永久故障：芯片整体 10~100 FIT（工艺/面积/温度相关）
+- 瞬态故障：SRAM 典型 100~1000 FIT/Mbit（海平面，工艺节点相关），
+  显著高于永久失效率，高 ASIL 设计必须单独评估软错误贡献
+
+**硬件架构度量目标（ISO 26262-5:2018 §8/§9）**：
+
+| 度量 | ASIL B | ASIL C | ASIL D |
+|------|--------|--------|--------|
+| SPFM（单点故障度量） | ≥90% | ≥97% | ≥99% |
+| LFM（潜伏故障度量） | ≥60% | ≥80% | ≥90% |
+| PMHF（随机硬件失效概率） | <10⁻⁷/h | <10⁻⁷/h | <10⁻⁸/h |
+
+> 注：以上为参考量级，实际值须以芯片 Safety Manual / FMEDA 报告为准，不可编造。
+"""
+
+
+# ======================================================================
+# 芯片级安全机制与软件配合点（ISO 26262-11:2018 §5.1.9）
+# ======================================================================
+
+CHIP_SAFETY_MECHANISM_TABLE = """
+### 芯片级安全机制参考（ISO 26262-11:2018，含软件配合点）
+
+| 安全机制 | 典型 DC | 覆盖对象 | 软件配合点（软件安全需求来源） |
+|---------|---------|---------|------------------------------|
+| 双核锁步（Lockstep） | ≥99% | CPU 核心永久+瞬态故障 | 锁步比较错误的异常处理、周期性锁步自检触发 |
+| ECC（SECDED） | ≥99% | SRAM/Flash/Cache 单比特 | 单比特纠正计数与阈值告警、双比特错误安全状态转换 |
+| MBIST（存储器内建自检） | 90%~99% | 存储阵列永久故障 | 启动时触发 MBIST 并校验结果、失败进入安全状态 |
+| LBIST（逻辑内建自检） | 60%~90% | 数字逻辑潜伏故障 | 启动/停机时调度 LBIST、执行窗口与 FTTI 协调 |
+| SBST（软件自检库） | 60%~90% | CPU/外设永久故障 | 周期性调度（潜伏故障检测周期内完成）、结果签名比对 |
+| 时钟监控（CMU） | 90%~99% | 时钟丢失/频率漂移 | 监控窗口配置、时钟失效中断响应与降级策略 |
+| 电压监控（PMU/LVD/OVD） | 90%~99% | 电源欠压/过压 | 阈值配置校验、掉电异常处理与数据保护 |
+| 看门狗（窗口型/Q&A 型） | 90% | 程序流/时序异常 | 喂狗点布置、Q&A 序列实现、超时复位策略 |
+| MPU/SMPU 空间隔离 | ≥99% | 存储访问越界（FFI） | 分区配置及配置后回读校验、访问违例异常处理 |
+| 总线 E2E 保护（CRC/计数器） | 90%~99% | 片上/片间通信损坏 | E2E Profile 选型、CRC 校验失败的错误处理 |
+| 配置寄存器回读校验 | 60%~90% | 安全关键配置翻转 | 写后回读比对、周期性刷新（refresh）关键配置 |
+| 错误管理单元（FCCU/EMC） | — | 故障收集与响应路由 | 故障反应等级配置（中断/复位/安全状态输出） |
+
+**软件视角使用要点**：
+1. 芯片硬件安全机制的**配置、使能自检、故障响应**均需落实为软件安全需求（SRS）
+   并在测试用例中验证（故障注入测试）
+2. 潜伏故障检测（LBIST/SBST/ECC 潜伏位清洗）的调度周期须与安全目标的
+   潜伏故障检测时间间隔（多点故障检测间隔 MPFDI）一致
+3. DC 声称值须以芯片 Safety Manual 为准；上表为 Part 11 典型参考量级
+"""
+
+
+# ======================================================================
+# 片上相关失效清单（ISO 26262-11:2018 §4.8，DFA 输入）
+# ======================================================================
+
+CHIP_DEPENDENT_FAILURE_LIST = """
+### 片上相关失效发起者清单（ISO 26262-11:2018 §4.8 / Annex A）
+
+**共享资源类（共因失效发起者）**：
+- 共享时钟树 / PLL：单一时钟源失效同时影响冗余通道
+- 共享电源轨 / LDO：电压跌落同时影响多个安全相关模块
+- 共享复位树：异常复位同时清除冗余状态
+- 共享测试逻辑（DFT/扫描链）：测试模式误入侵
+- 共享模拟基准（带隙、偏置电流）
+
+**物理耦合类**：
+- 衬底耦合（噪声注入、闩锁效应传播）
+- 温度梯度（局部热点导致相邻模块参数漂移）
+- 封装级失效（键合线短路、引脚桥接）
+- 相邻位/相邻单元多位翻转（MBU，影响未交织的冗余存储）
+
+**软件可见的相关失效路径（DFA 重点）**：
+- 冗余软件通道共享同一 RAM/Flash ECC 域
+- 锁步核与主核共享中断控制器 / DMA 路径
+- 共享外设（同一 ADC 采样冗余信号）
+- 共享库函数 / 编译器（系统性共因）
+
+**典型缓解措施**：
+- 物理隔离：版图分区（floorplan separation）、独立电源域、隔离单元
+- 时钟/复位独立：冗余通道使用独立时钟源或时钟监控兜底
+- 存储交织（interleaving）：降低 MBU 导致的共因失效
+- 安全岛（Safety Island）：独立电源/时钟/存储的监控子系统
+- 软件层：内存分区（MPU 强制 FFI）、双通道数据反码存储、执行时间分散
+"""
+
+
+# ======================================================================
 # 知识库注入接口
 # ======================================================================
 
@@ -173,33 +283,43 @@ def get_safety_knowledge(asil_level: str, doc_type: str) -> str:
     """
     sections = []
 
-    # FMEA / DFA 注入失效模式库和安全机制 DC 表
+    # FMEA / DFA 注入失效模式库（软件级 + 芯片级）和安全机制 DC 表
     if doc_type in ("FMEA", "DFA"):
         sections.append(FAILURE_MODE_LIBRARY)
+        sections.append(CHIP_FAILURE_MODE_LIBRARY)
         sections.append(SAFETY_MECHANISM_DC_TABLE)
+        sections.append(CHIP_SAFETY_MECHANISM_TABLE)
         if asil_level in ("ASIL C", "ASIL D"):
             sections.append(FTTI_REFERENCE)
+
+    # DFA 注入片上相关失效清单（DFA 的核心分析输入）
+    if doc_type == "DFA":
+        sections.append(CHIP_DEPENDENT_FAILURE_LIST)
 
     # DFA 额外注入 ASIL 分解规则（含独立性论证方法，DFA 的核心分析对象）
     if doc_type == "DFA" and asil_level in ("ASIL B", "ASIL C", "ASIL D"):
         sections.append(ASIL_DECOMPOSITION_RULES)
 
-    # SRS 注入 ASIL 分解规则（ASIL B 及以上）
+    # SRS 注入 ASIL 分解规则 + 芯片安全机制表（软件配合点是软件安全需求的直接来源）
     if doc_type == "SRS" and asil_level in ("ASIL B", "ASIL C", "ASIL D"):
         sections.append(ASIL_DECOMPOSITION_RULES)
+        sections.append(CHIP_SAFETY_MECHANISM_TABLE)
 
-    # SAD 注入安全机制 DC 表（用于架构安全机制选型）
+    # SAD 注入安全机制 DC 表（软件级 + 芯片级，用于架构安全机制选型）
     if doc_type == "SAD" and asil_level in ("ASIL B", "ASIL C", "ASIL D"):
         sections.append(SAFETY_MECHANISM_DC_TABLE)
+        sections.append(CHIP_SAFETY_MECHANISM_TABLE)
 
     # SDD 注入 FTTI 参考（ASIL C/D 需要时间约束分析）
     if doc_type == "SDD" and asil_level in ("ASIL C", "ASIL D"):
         sections.append(FTTI_REFERENCE)
         sections.append(SAFETY_MECHANISM_DC_TABLE)
+        sections.append(CHIP_SAFETY_MECHANISM_TABLE)
 
-    # TC-UNIT / TC-INTEGRATION 注入安全机制参考（用于故障注入测试设计）
+    # TC-UNIT / TC-INTEGRATION 注入安全机制参考（软件级 + 芯片级，用于故障注入测试设计）
     if doc_type in ("TC-UNIT", "TC-INTEGRATION") and asil_level in ("ASIL B", "ASIL C", "ASIL D"):
         sections.append(SAFETY_MECHANISM_DC_TABLE)
+        sections.append(CHIP_SAFETY_MECHANISM_TABLE)
 
     if not sections:
         return ""
