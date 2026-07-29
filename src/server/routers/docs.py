@@ -80,6 +80,7 @@ def get_doc(module: str, agent: str):
 def delete_doc(module: str, agent: str):
     docs = STATE.get_module_docs(module)
     docs.pop(agent.upper(), None)
+    STATE.remove_doc_file(module, agent.upper())
     STATE.persist()
     return {"ok": True}
 
@@ -88,6 +89,7 @@ def delete_doc(module: str, agent: str):
 def clear_all_docs():
     STATE.docs_by_module = {}
     STATE.batch_checkpoint = {}
+    STATE.clear_result_docs()
     STATE.persist()
     return {"ok": True}
 

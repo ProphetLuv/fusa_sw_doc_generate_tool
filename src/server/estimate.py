@@ -116,6 +116,8 @@ def estimate_agent_total_tokens(
     chunked_mode: bool = False,
     review_mode: bool = False,
     generated_docs: dict = None,
+    chunk_inject: bool = False,
+    custom_template: str = None,
 ) -> dict:
     """综合预估单个 Agent 的真实 Token 消耗（含上下文注入和额外调用轮次）。"""
     docs = generated_docs if generated_docs is not None else {}
@@ -132,6 +134,9 @@ def estimate_agent_total_tokens(
         knowledge_text += get_asil_decomposition_guidance(asil_level)
     knowledge_tokens = estimate_tokens(knowledge_text) if knowledge_text else 0
 
+    # 3.5 用户自定义模板注入（普通模式 1 份，分段模式每段 1 份）
+    custom_template_tokens = estimate_tokens(custom_template) if custom_template else 0
+
     # 4. 前置文档注入
     prior_keys = _AGENT_PRIOR_DOCS.get(agent_type, [])
     prior_docs_tokens = 0
@@ -142,7 +147,7 @@ def estimate_agent_total_tokens(
         prior_docs_tokens += len(prior_keys) * 30
 
     # 5. 单轮输入合计（普通模式）
-    input_total = code_tokens + template_tokens + knowledge_tokens + prior_docs_tokens
+    input_total = code_tokens + template_tokens + knowledge_tokens + prior_docs_tokens + custom_template_tokens
 
     # 6. 预估输出：基于代码量动态缩放（4000 token 为基准，0.3x ~ 2.0x）
     ref = max(code_tokens, 1) if code_tokens else 1
@@ -159,7 +164,10 @@ def estimate_agent_total_tokens(
         n_chunks = _AGENT_CHUNK_COUNT.get(agent_type, 3)
         chunk_output = output_estimated // n_chunks
 
-        chunk_input_per_call = code_tokens + prior_docs_tokens + _CHUNK_TEMPLATE_OVERHEAD
+        # 同步注入模式：每段额外附带一份安全知识库；自定义模板同样每段追加
+        chunk_knowledge = knowledge_tokens if chunk_inject else 0
+        chunk_input_per_call = (code_tokens + prior_docs_tokens + _CHUNK_TEMPLATE_OVERHEAD
+                                + chunk_knowledge + custom_template_tokens)
         chunks_total = n_chunks * (chunk_input_per_call + chunk_output)
 
         merge_input = output_estimated + _MERGE_PROMPT_OVERHEAD + code_tokens
@@ -176,6 +184,7 @@ def estimate_agent_total_tokens(
         "code_tokens": code_tokens,
         "template_tokens": template_tokens,
         "knowledge_tokens": knowledge_tokens,
+        "custom_template_tokens": custom_template_tokens,
         "prior_docs_tokens": prior_docs_tokens,
         "input_total": input_total,
         "output_estimated": output_estimated,
@@ -188,13 +197,16 @@ def estimate_batch_total_tokens(
     code: str,
     asil_level: str = "ASIL B",
     generated_docs: dict = None,
+    templates: dict = None,
 ) -> dict:
     """预估批量生成全部 7 个 Agent 的总 Token 消耗（顺序累加前置文档）。"""
     docs = dict(generated_docs or {})
+    tmpl = templates or {}
     per_agent = {}
     total = 0
     for agent in AGENT_ORDER:
-        est = estimate_agent_total_tokens(agent, code, asil_level, generated_docs=docs)
+        est = estimate_agent_total_tokens(agent, code, asil_level, generated_docs=docs,
+                                          custom_template=tmpl.get(agent))
         per_agent[agent] = est
         total += est["grand_total"]
         docs[agent] = "x" * (est["output_estimated"] * 3)

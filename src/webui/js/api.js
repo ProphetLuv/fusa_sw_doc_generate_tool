@@ -53,11 +53,12 @@ const API = {
   getModuleAnalysis(name) { return this.get(`/api/modules/${encodeURIComponent(name)}/analysis`); },
 
   // ---- 预估 ----
-  estimateAgent(agent, module, chunked, review) {
+  estimateAgent(agent, module, chunked, review, chunkInject) {
     const q = new URLSearchParams();
     q.set("_t", Date.now());
     if (module) q.set("module", module);
     if (chunked) q.set("chunked", "true");
+    if (chunked && chunkInject) q.set("chunk_inject", "true");
     if (review) q.set("review", "true");
     return this.get(`/api/estimate/agent/${agent}?${q}`);
   },

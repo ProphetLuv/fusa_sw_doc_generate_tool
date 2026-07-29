@@ -36,6 +36,7 @@ def generate_agent_stream(
     agent: str,
     module: Optional[str] = None,
     chunked: bool = False,
+    chunk_inject: bool = False,
     review: bool = False,
     max_tokens: Optional[int] = None,
     review_provider: Optional[str] = None,
@@ -43,7 +44,7 @@ def generate_agent_stream(
     review_api_base: Optional[str] = None,
     review_model: Optional[str] = None,
 ):
-    """单 Agent 流式生成（SSE）。"""
+    """单 Agent 流式生成（SSE）。chunk_inject：分段并发时每段同步注入安全知识库。"""
     agent = agent.upper()
     review_cfg = None
     if review and review_api_key:
@@ -59,6 +60,7 @@ def generate_agent_stream(
         agent, module, dict(STATE.config),
         chunked_mode=chunked, review_mode=review, review_cfg=review_cfg,
         max_tokens=max_tokens, custom_template=custom_template,
+        chunk_inject=chunk_inject,
     )
     return sse_response(ev)
 

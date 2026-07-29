@@ -3,5 +3,6 @@ __pycache__/
 *.pyc
 saved_results.json
 generation_log.jsonl
+result_doc/
 *.log
 .tmp_verify/

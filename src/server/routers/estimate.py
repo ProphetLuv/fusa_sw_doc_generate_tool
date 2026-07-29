@@ -19,8 +19,9 @@ def _resolve_module(module: str = None) -> str:
 
 @router.get("/agent/{agent}")
 def estimate_agent(agent: str, module: str = None,
-                   chunked: bool = False, review: bool = False):
-    """单 Agent Token 预估。"""
+                   chunked: bool = False, review: bool = False,
+                   chunk_inject: bool = False):
+    """单 Agent Token 预估。chunk_inject：分段并发时每段同步注入知识库。"""
     agent = agent.upper()
     if agent not in AGENT_ORDER:
         raise HTTPException(status_code=400, detail=f"未知 Agent: {agent}")
@@ -31,6 +32,8 @@ def estimate_agent(agent: str, module: str = None,
         asil_level=STATE.config.get("asil_level", "ASIL B"),
         chunked_mode=chunked, review_mode=review,
         generated_docs=STATE.get_module_docs(mod),
+        chunk_inject=chunk_inject,
+        custom_template=STATE.agent_templates.get(agent),
     )
     est["cost"] = estimate_cost(est["grand_total"], STATE.config.get("provider", "openai"))
     est["default_max_tokens"] = get_agent_token_defaults(
@@ -47,7 +50,8 @@ def estimate_batch(module: str = None):
     if module or len(STATE.project_modules) <= 1:
         mod = _resolve_module(module)
         code = STATE.module_code(mod) or STATE.active_code()
-        result = estimate_batch_total_tokens(code, asil, STATE.get_module_docs(mod))
+        result = estimate_batch_total_tokens(code, asil, STATE.get_module_docs(mod),
+                                             templates=STATE.agent_templates)
         result["cost"] = estimate_cost(result["total"], provider)
         result["scope"] = "single"
         return result
@@ -58,7 +62,8 @@ def estimate_batch(module: str = None):
     for mn in selected:
         mc = STATE.project_modules.get(mn, "")
         if mc:
-            total += estimate_batch_total_tokens(mc, asil, STATE.get_module_docs(mn))["total"]
+            total += estimate_batch_total_tokens(mc, asil, STATE.get_module_docs(mn),
+                                                 templates=STATE.agent_templates)["total"]
     return {
         "total": total, "cost": estimate_cost(total, provider),
         "scope": "project", "module_count": len(selected),

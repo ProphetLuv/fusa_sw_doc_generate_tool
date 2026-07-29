@@ -180,6 +180,7 @@ class PromptManager:
         context: Optional[Dict[str, Any]] = None,
         custom_template: Optional[str] = None,
         background_prompt: Optional[str] = None,
+        inject_knowledge: bool = False,
     ) -> list:
         ctx = context or {}
         module_name = ctx.get("module_name", "目标模块")
@@ -189,6 +190,9 @@ class PromptManager:
         if not chunks:
             full_prompt = self.get_prompt(doc_type, code, context, custom_template, background_prompt=background_prompt)
             return [(doc_type, full_prompt)]
+
+        # 同步注入模式：每段附带与普通模式一致的安全知识库（token 消耗 × 段数）
+        knowledge = get_safety_knowledge(asil_level, doc_type.upper()) if inject_knowledge else ""
 
         results = []
         prior_docs = ctx.get("prior_docs")
@@ -201,6 +205,8 @@ class PromptManager:
             # 注入全局项目背景
             if background_prompt:
                 chunk_prompt = self._inject_background(chunk_prompt, background_prompt)
+            if knowledge:
+                chunk_prompt += knowledge
             if prior_docs:
                 chunk_prompt = self._inject_prior_docs(chunk_prompt, prior_docs)
             if custom_template:

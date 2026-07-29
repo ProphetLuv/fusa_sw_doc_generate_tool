@@ -7,15 +7,24 @@ state.py — 应用状态单例（替代 Streamlit 的 st.session_state）。
 """
 
 import os
+import re
 import sys
 import json
 import stat
 import time
+import shutil
 import threading
 
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # -> src/
 _SAVE_FILE = os.path.normpath(os.path.join(_BASE_DIR, "..", "saved_results.json"))
 _LOG_FILE = os.path.normpath(os.path.join(_BASE_DIR, "..", "generation_log.jsonl"))
+_RESULT_DIR = os.path.normpath(os.path.join(_BASE_DIR, "..", "result_doc"))
+
+
+def _safe_dir_name(name: str) -> str:
+    """模块名转安全文件夹名（过滤 Windows 非法字符与尾部点/空格）。"""
+    cleaned = re.sub(r'[<>:"/\\|?*]', "_", (name or "").strip()).rstrip(". ")
+    return cleaned or "未命名模块"
 
 
 def _default_config() -> dict:
@@ -166,6 +175,72 @@ class AppState:
         with self._lock:
             self.config.update(patch)
         return self.config
+
+    # ------------------------------------------------------------------
+    # result_doc 落盘（按模块子文件夹存放生成的 Markdown）
+    # ------------------------------------------------------------------
+
+    def save_doc_file(self, module: str, agent_type: str, content: str):
+        """将生成的文档写入 result_doc/<模块>/<模块>_<Agent>.md。"""
+        try:
+            mod_dir = os.path.join(_RESULT_DIR, _safe_dir_name(module))
+            os.makedirs(mod_dir, exist_ok=True)
+            path = os.path.join(mod_dir, f"{_safe_dir_name(module)}_{agent_type}.md")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+        except Exception as e:
+            print(f"[WARN] 文档落盘失败 {module}/{agent_type}: {e}", file=sys.stderr)
+
+    def remove_doc_file(self, module: str, agent_type: str):
+        """删除单份文档对应的落盘文件；模块文件夹清空后一并删除。"""
+        try:
+            mod_dir = os.path.join(_RESULT_DIR, _safe_dir_name(module))
+            path = os.path.join(mod_dir, f"{_safe_dir_name(module)}_{agent_type}.md")
+            if os.path.isfile(path):
+                os.remove(path)
+            if os.path.isdir(mod_dir) and not os.listdir(mod_dir):
+                os.rmdir(mod_dir)
+        except Exception as e:
+            print(f"[WARN] 文档落盘文件删除失败 {module}/{agent_type}: {e}", file=sys.stderr)
+
+    def remove_module_result_dir(self, module: str):
+        """删除单个模块的落盘子文件夹（模块删除时调用）。"""
+        try:
+            mod_dir = os.path.join(_RESULT_DIR, _safe_dir_name(module))
+            if os.path.isdir(mod_dir):
+                shutil.rmtree(mod_dir)
+        except Exception as e:
+            print(f"[WARN] 模块落盘文件夹删除失败 {module}: {e}", file=sys.stderr)
+
+    def rename_module_result_dir(self, old_name: str, new_name: str):
+        """模块重命名时同步迁移落盘子文件夹及其中文件名前缀。"""
+        try:
+            old_dir = os.path.join(_RESULT_DIR, _safe_dir_name(old_name))
+            if not os.path.isdir(old_dir):
+                return
+            new_dir = os.path.join(_RESULT_DIR, _safe_dir_name(new_name))
+            if os.path.isdir(new_dir):
+                shutil.rmtree(new_dir)
+            os.rename(old_dir, new_dir)
+            old_prefix = f"{_safe_dir_name(old_name)}_"
+            for fn in os.listdir(new_dir):
+                if fn.startswith(old_prefix):
+                    os.rename(os.path.join(new_dir, fn),
+                              os.path.join(new_dir, f"{_safe_dir_name(new_name)}_{fn[len(old_prefix):]}"))
+        except Exception as e:
+            print(f"[WARN] 模块落盘文件夹重命名失败 {old_name}→{new_name}: {e}", file=sys.stderr)
+
+    def clear_result_docs(self):
+        """清空 result_doc 下所有模块子文件夹（清空文档时调用）。"""
+        try:
+            if not os.path.isdir(_RESULT_DIR):
+                return
+            for entry in os.listdir(_RESULT_DIR):
+                sub = os.path.join(_RESULT_DIR, entry)
+                if os.path.isdir(sub):
+                    shutil.rmtree(sub)
+        except Exception as e:
+            print(f"[WARN] 清空落盘文档失败: {e}", file=sys.stderr)
 
     # ------------------------------------------------------------------
     # 持久化

@@ -50,6 +50,10 @@ const Workspace = {
               <input class="form-check-input" type="checkbox" id="ws-chunked">
               <label class="form-check-label small" for="ws-chunked">分段并发生成（长文档更快，需多 Key 更佳）</label>
             </div>
+            <div class="form-check form-switch ms-3">
+              <input class="form-check-input" type="checkbox" id="ws-chunk-inject" disabled>
+              <label class="form-check-label small" for="ws-chunk-inject">并发生成同步注入 Prompt（每段注入安全知识库，更专业但耗 Token）</label>
+            </div>
             <div class="form-check form-switch">
               <input class="form-check-input" type="checkbox" id="ws-review">
               <label class="form-check-label small" for="ws-review">生成后自动审查修订</label>
@@ -104,7 +108,14 @@ const Workspace = {
   bind() {
     const $ = (id) => document.getElementById(id);
     $("ws-agent").addEventListener("change", (e) => { Store.wsAgent = e.target.value; this.render(); });
-    $("ws-chunked").addEventListener("change", () => this.refreshEstimate());
+    $("ws-chunked").addEventListener("change", (e) => {
+      // 同步注入仅在分段并发下有意义：关闭时禁用并取消勾选
+      const inject = $("ws-chunk-inject");
+      inject.disabled = !e.target.checked;
+      if (!e.target.checked) inject.checked = false;
+      this.refreshEstimate();
+    });
+    $("ws-chunk-inject").addEventListener("change", () => this.refreshEstimate());
     $("ws-review").addEventListener("change", () => this.refreshEstimate());
     $("ws-generate").addEventListener("click", () => this.generate());
     $("ws-stop").addEventListener("click", () => this.stop());
@@ -172,6 +183,7 @@ const Workspace = {
     const box = document.getElementById("ws-est");
     if (!box) return;
     const chunked = document.getElementById("ws-chunked").checked;
+    const chunkInject = document.getElementById("ws-chunk-inject").checked;
     const review = document.getElementById("ws-review").checked;
     // 优先使用传入的模块名，否则从 DOM 芯片状态推断
     const sel = this._selectedModules();
@@ -183,12 +195,13 @@ const Workspace = {
       ? forceModule
       : (sel.length === 1 ? sel[0] : (sel.length > 1 ? `${sel.length} 个模块` : (Store.activeModule || "-")));
     try {
-      const r = await API.estimateAgent(Store.wsAgent, targetModule, chunked, review);
+      const r = await API.estimateAgent(Store.wsAgent, targetModule, chunked, review, chunkInject);
       box.innerHTML = `
         <div class="small mb-1 fw-bold">📊 预估模块：${UI.esc(modLabel)}</div>
         <table class="est-table w-100">
           <tr><td>源代码</td><td>${r.code_tokens.toLocaleString()}</td></tr>
           <tr><td>模板 + 知识库</td><td>${(r.template_tokens + r.knowledge_tokens).toLocaleString()}</td></tr>
+          ${r.custom_template_tokens ? `<tr><td>自定义模板</td><td>${r.custom_template_tokens.toLocaleString()}</td></tr>` : ""}
           <tr><td>前置文档注入</td><td>${r.prior_docs_tokens.toLocaleString()}</td></tr>
           <tr><td>预计输出</td><td>${r.output_estimated.toLocaleString()}</td></tr>
           <tr><td>调用轮次</td><td>${r.call_rounds}</td></tr>
@@ -272,12 +285,14 @@ const Workspace = {
     const st = document.getElementById("ws-status");
 
     const chunked = document.getElementById("ws-chunked").checked;
+    const chunkInject = document.getElementById("ws-chunk-inject").checked;
     const review = document.getElementById("ws-review").checked;
     const maxTokens = document.getElementById("ws-maxtokens").value;
 
     const q = new URLSearchParams();
     if (Store.activeModule) q.set("module", Store.activeModule);
     if (chunked) q.set("chunked", "true");
+    if (chunked && chunkInject) q.set("chunk_inject", "true");
     if (review) q.set("review", "true");
     if (maxTokens) q.set("max_tokens", maxTokens);
     // 审查复用主配置

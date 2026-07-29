@@ -43,9 +43,10 @@ def rename(req: RenameRequest):
         raise HTTPException(status_code=404, detail="模块不存在")
     STATE.module_files = rename_module(STATE.module_files, req.old_name, req.new_name)
     STATE.project_modules = rename_module(STATE.project_modules, req.old_name, req.new_name)
-    # docs_by_module 同步重命名
+    # docs_by_module 同步重命名（含 result_doc 落盘文件夹）
     if req.old_name in STATE.docs_by_module:
         STATE.docs_by_module[req.new_name] = STATE.docs_by_module.pop(req.old_name)
+    STATE.rename_module_result_dir(req.old_name, req.new_name)
     # 同步迁移所有 {module}::{agent} 格式的 key
     for src_dict in (STATE.doc_versions, STATE.token_usage):
         for old_key, val in list(src_dict.items()):
@@ -67,6 +68,7 @@ def delete(req: DeleteRequest):
     STATE.module_files = delete_module(STATE.module_files, req.name)
     STATE.project_modules = delete_module(STATE.project_modules, req.name)
     STATE.docs_by_module.pop(req.name, None)
+    STATE.remove_module_result_dir(req.name)
     if STATE.active_module == req.name:
         STATE.active_module = next(iter(STATE.project_modules), None)
     STATE.selected_modules = [m for m in STATE.selected_modules if m != req.name]

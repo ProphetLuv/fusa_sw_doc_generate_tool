@@ -117,7 +117,7 @@ def _record_usage(engine: LLMEngine, prompt: str, full_text: str, duration: floa
 
 def generate_single_stream(agent_type, module, cfg, chunked_mode=False,
                            review_mode=False, review_cfg=None, max_tokens=None,
-                           custom_template=None):
+                           custom_template=None, chunk_inject=False):
     """单 Agent 生成的 SSE 事件生成器。"""
     module = module or STATE.active_module_name()
     code = STATE.module_code(module) or STATE.active_code()
@@ -145,7 +145,7 @@ def generate_single_stream(agent_type, module, cfg, chunked_mode=False,
     try:
         if chunked_mode:
             yield from _chunked_generate(agent_type, code, ctx, cfg, engine, custom_template,
-                                         out := _Collector())
+                                         out := _Collector(), chunk_inject=chunk_inject)
             full_text = out.text
             prompt_for_log = out.text  # 分段模式无单一 prompt，用输出估算
         else:
@@ -162,10 +162,11 @@ def generate_single_stream(agent_type, module, cfg, chunked_mode=False,
 
     duration = time.time() - t0
 
-    # 保存结果到活动模块（保留旧版本用于 Diff）
+    # 保存结果到活动模块（保留旧版本用于 Diff）+ 落盘 result_doc
     if agent_type in mod_docs:
         STATE.push_version(module, agent_type, mod_docs[agent_type])
     mod_docs[agent_type] = full_text
+    STATE.save_doc_file(module, agent_type, full_text)
 
     # 校验
     report, validation = _run_validation(agent_type, full_text, code, custom_template)
@@ -202,6 +203,7 @@ def generate_single_stream(agent_type, module, cfg, chunked_mode=False,
                 STATE.push_version(module, agent_type, full_text)
                 mod_docs[agent_type] = reviewed
                 full_text = reviewed
+                STATE.save_doc_file(module, agent_type, full_text)
                 report, validation = _run_validation(agent_type, full_text, code, custom_template)
                 STATE.add_history(module, f"{agent_type} (审查修订)", "成功")
                 STATE.persist()
@@ -220,11 +222,13 @@ class _Collector:
         self.text = ""
 
 
-def _chunked_generate(agent_type, code, ctx, cfg, engine, custom_template, collector):
+def _chunked_generate(agent_type, code, ctx, cfg, engine, custom_template, collector,
+                      chunk_inject=False):
     """分段并发生成 + 一致性合并（生成器，yield 事件；结果写入 collector.text）。"""
     chunks = _PROMPT_MGR.get_chunk_prompts(agent_type, code, ctx,
                                             custom_template=custom_template,
-                                            background_prompt=cfg.get("background_prompt"))
+                                            background_prompt=cfg.get("background_prompt"),
+                                            inject_knowledge=chunk_inject)
     if len(chunks) <= 1:
         prompt = chunks[0][1] if chunks else _PROMPT_MGR.get_prompt(
             agent_type, code, ctx,
@@ -402,6 +406,7 @@ def generate_batch_stream(cfg, agents=None, modules=None):
             duration = time.time() - t0
 
             mod_docs[agent_type] = text
+            STATE.save_doc_file(mod_name, agent_type, text)
             report, _ = _run_validation(agent_type, text, mod_code,
                                         STATE.agent_templates.get(agent_type))
             STATE.add_history(mod_name, agent_type,
