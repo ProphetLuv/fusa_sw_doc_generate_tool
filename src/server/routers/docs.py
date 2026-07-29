@@ -12,7 +12,7 @@ import logging
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, UploadFile, File
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 
 from server.state import STATE
 from server.models import CrossValidateRequest, LocalPathRequest
@@ -159,42 +159,81 @@ def export_excel(module: str, agent: str = "FMEA"):
     )
 
 
-@router.get("/api/export/zip")
-def export_zip():
-    """将所有模块的已生成文档打包为 zip（按模块子目录组织）。"""
-    asil = STATE.config.get("asil_level", "ASIL B")
-    docs_by_module = STATE.docs_by_module
-    if not any(docs_by_module.values()):
-        raise HTTPException(status_code=400, detail="暂无可导出的文档")
+class _ZipStreamBuffer:
+    """供 zipfile 写入的最小非 seek 流：写入的字节暂存，由生成器 pop 取走。"""
 
-    buf = io.BytesIO()
+    def __init__(self):
+        self._chunks = []
+        self._pos = 0
+
+    def write(self, data):
+        self._chunks.append(data)
+        self._pos += len(data)
+        return len(data)
+
+    def tell(self):
+        return self._pos
+
+    def seekable(self):
+        return False
+
+    def flush(self):
+        pass
+
+    def pop(self) -> bytes:
+        data = b"".join(self._chunks)
+        self._chunks = []
+        return data
+
+
+def _iter_zip_export(docs_by_module: dict, asil: str):
+    """逐文档转换并流式产出 zip 字节，让浏览器立即弹出下载而非等全量打包。"""
+    stream = _ZipStreamBuffer()
     multi = len([1 for d in docs_by_module.values() if d]) > 1
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+    with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as zf:
         for mod_name, docs in docs_by_module.items():
             if not docs:
                 continue
             prefix = f"{mod_name}/" if multi else ""
             for dt, content in docs.items():
                 zf.writestr(f"{prefix}{mod_name}_{dt}.md", content)
+                yield stream.pop()
                 try:
                     metadata = {
                         "doc_id": f"DOC-{dt}-{mod_name}", "version": "1.0",
                         "module_name": mod_name, "asil_level": asil,
                         "date": time.strftime("%Y-%m-%d"),
                     }
+                    # docx 本身是 zip 容器，STORED 免二次压缩
                     zf.writestr(f"{prefix}{mod_name}_{dt}.docx",
                                 export_to_word(title=f"{mod_name} {dt} 文档",
-                                               markdown=content, metadata=metadata))
+                                               markdown=content, metadata=metadata),
+                                zipfile.ZIP_STORED)
                 except Exception:
-                    pass
+                    _logger.warning("打包时 Word 转换失败: %s/%s", mod_name, dt, exc_info=True)
+                yield stream.pop()
                 if dt == "FMEA":
                     try:
                         zf.writestr(f"{prefix}{mod_name}_FMEA.xlsx",
-                                    export_fmea_to_excel(content))
+                                    export_fmea_to_excel(content),
+                                    zipfile.ZIP_STORED)
                     except Exception:
-                        pass
-    return Response(
-        content=buf.getvalue(), media_type="application/zip",
+                        _logger.warning("打包时 Excel 转换失败: %s/FMEA", mod_name, exc_info=True)
+                    yield stream.pop()
+    # zip 中央目录（ZipFile 关闭时写入）
+    yield stream.pop()
+
+
+@router.get("/api/export/zip")
+def export_zip():
+    """将所有模块的已生成文档打包为 zip（按模块子目录组织，流式输出）。"""
+    asil = STATE.config.get("asil_level", "ASIL B")
+    docs_by_module = STATE.docs_by_module
+    if not any(docs_by_module.values()):
+        raise HTTPException(status_code=400, detail="暂无可导出的文档")
+
+    return StreamingResponse(
+        _iter_zip_export(docs_by_module, asil), media_type="application/zip",
         headers={"Content-Disposition": f"attachment; filename=\"all_docs.zip\"; filename*=UTF-8''{quote('全部文档.zip')}"},
     )
 
